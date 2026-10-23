@@ -14,6 +14,8 @@ use crate::wasapi::{Capture, Jitter, Render};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
+use windows::Win32::Media::Audio::Endpoints::IAudioMeterInformation;
 
 pub const METERS: usize = 6; // game chat media aux mic master
 
@@ -91,6 +93,10 @@ struct Chan {
     jit: Jitter,
     eq: EqProc,
     gain: f32,
+    /// The device's own peak meter, independent of our capture stream.
+    meter: Option<IAudioMeterInformation>,
+    /// Last time our capture actually delivered audio.
+    last_data: Instant,
 }
 
 fn run(sh: Arc<Shared>) {
@@ -131,8 +137,11 @@ fn session(sh: &Shared) -> windows::core::Result<bool> {
             jit: Jitter::new(30, 120),
             eq: EqProc::default(),
             gain: 0.0,
+            meter: if c.source.is_empty() { None } else { crate::win_audio::endpoint_meter(&c.source) },
+            last_data: Instant::now(),
         })
         .collect();
+    let started = Instant::now();
     for (c, cfg) in chans.iter_mut().zip(&p.ch) {
         c.eq.configure(&cfg.eq);
     }
@@ -156,8 +165,19 @@ fn session(sh: &Shared) -> windows::core::Result<bool> {
     let mut tmp: Vec<f32> = Vec::with_capacity(4096);
     let mut mic_buf: Vec<f32> = Vec::with_capacity(8192);
 
+    let dbg = std::env::var_os("BITGG_LOG").is_some();
+    let mut iters = 0u64;
+    let mut last_log = Instant::now();
     while !sh.stop.load(Ordering::Acquire) {
         out.wait(50);
+        iters += 1;
+        if dbg && last_log.elapsed() > Duration::from_secs(1) {
+            last_log = Instant::now();
+            let q: Vec<String> = chans.iter().map(|c| match &c.cap { Some(_) => format!("{}", c.jit.q.len()), None => "-".into() }).collect();
+            let free = out.free_frames().unwrap_or(9999);
+            crate::dlog(&format!("engine iters={iters} free={free} queues=[{}] since_data=[{}]", q.join(","),
+                chans.iter().map(|c| format!("{}ms", c.last_data.elapsed().as_millis())).collect::<Vec<_>>().join(",")));
+        }
 
         // hot-reload parameters
         let v = sh.version.load(Ordering::Acquire);
@@ -181,8 +201,27 @@ fn session(sh: &Shared) -> windows::core::Result<bool> {
         // ---- capture side
         for c in chans.iter_mut() {
             if let Some(cap) = c.cap.as_mut() {
+                let before = c.jit.q.len();
                 if cap.drain(&mut c.jit.q).is_err() {
                     return Ok(false);
+                }
+                // only real audio counts: a stale stream can keep delivering
+                // packets flagged silent
+                if c.jit.q.range(before..).any(|x| x.abs() > 1e-5) {
+                    c.last_data = Instant::now();
+                }
+            }
+        }
+        // ---- watchdog: Windows says audio is playing into a channel, but our
+        // capture has been silent -> its stream went stale without an error
+        // (e.g. opened during a device pipeline restart). Reopen everything.
+        if started.elapsed() > Duration::from_secs(2) {
+            for c in &chans {
+                let (Some(_), Some(m)) = (&c.cap, &c.meter) else { continue };
+                let playing = unsafe { m.GetPeakValue().unwrap_or(0.0) } > 0.001;
+                if playing && c.last_data.elapsed() > Duration::from_millis(1500) {
+                    sh.set_status("REOPENING STREAMS");
+                    return Ok(true);
                 }
             }
         }
