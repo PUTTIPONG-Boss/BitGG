@@ -49,6 +49,17 @@ unsafe fn mix_layout(client: &IAudioClient) -> (u16, u32) {
     (ch, mask)
 }
 
+/// Endpoint mix format as (sample rate, channels).
+pub fn mix_format(id: &str) -> Option<(u32, u16)> {
+    unsafe {
+        let client: IAudioClient = device(id).ok()?.Activate(CLSCTX_ALL, None).ok()?;
+        let f = client.GetMixFormat().ok()?;
+        let r = ((*f).nSamplesPerSec, (*f).nChannels);
+        windows::Win32::System::Com::CoTaskMemFree(Some(f as *const _));
+        Some(r)
+    }
+}
+
 fn open(id: &str, flags: u32, buffer_ms: i64) -> Result<IAudioClient> {
     open_ch(id, flags, buffer_ms, 2, 3)
 }

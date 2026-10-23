@@ -2,7 +2,7 @@
 
 > **สรุปภาษาไทย:** โฟลเดอร์นี้คือ driver เสียงเสมือนของ BitGG ดัดแปลงจากตัวอย่าง SysVAD ของ Microsoft ตอนนี้ **build ได้แล้วแต่ยังไม่ได้ทดสอบติดตั้งจริง** ห้ามติดตั้งบนเครื่องที่ใช้เล่นเกม ให้ทดสอบใน VM เท่านั้น (ดู [SPEC.md](../docs/driver/SPEC.md) ข้อ 6) ตัวแอป BitGG ยังใช้ Sonar / VB-Cable / DIRECT mode ได้ตามปกติ
 
-**Status: builds, not yet tested.** Do not install it on your gaming PC. Test it in a VM only (see [SPEC.md §6](../docs/driver/SPEC.md#6-build--test-plan)). The BitGG app does not use this driver yet.
+**Status: builds, not yet tested.** Do not install it on your gaming PC. Test it in a VM only, following [TESTPLAN.md](../docs/driver/TESTPLAN.md) (scripts in [`test/`](test/), checks in `bitgg --drivertest`). The BitGG app does not use this driver yet.
 
 ## What it creates
 
