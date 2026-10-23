@@ -80,16 +80,50 @@ cargo build --release
 
 ---
 
-## ออก Release (สำหรับคนดูแลโปรเจกต์)
+## Branch และการออก Release (สำหรับคนดูแลโปรเจกต์)
 
-push tag เวอร์ชันขึ้นไป แล้ว GitHub Actions จะ build, รันเทสต์ (รวมเทสต์กัน anti-cheat) และออก release พร้อม `BitGG.exe`, `SHA256SUMS.txt` และ provenance attestation ให้เอง
+| Branch | ใช้ทำอะไร |
+|---|---|
+| `main` | **ไว้ออก release อย่างเดียว** tag `v*` ทุกตัวต้องอยู่บน `main` ถ้า tag ไม่ได้อยู่บน `main` workflow จะไม่ยอมออก release |
+| `master` | branch สำหรับพัฒนา งานทุกชิ้นแตกออกจากตรงนี้ |
+| `<ชื่องาน>` | งานละ branch ตั้งชื่อตามงาน เช่น `code-signing`, `fix-mic-gain` |
 
 ```sh
+git switch master && git pull
+git switch -c fix-mic-gain        # ทำงาน, commit
+git push -u origin fix-mic-gain   # เปิด PR: fix-mic-gain -> master
+```
+
+พอ `master` พร้อมออกเวอร์ชัน ให้เปิด PR **`master` → `main`** แล้ว merge จากนั้น tag บน `main`:
+
+```sh
+git switch main && git pull
 git tag v0.2.0
 git push origin v0.2.0
 ```
 
-ทุกครั้งที่ push หรือเปิด PR เข้า `main` จะมี CI build และรันเทสต์ให้ด้วย
+GitHub Actions จะ build, รันเทสต์ (รวมเทสต์กัน anti-cheat), เซ็นชื่อ (ถ้าตั้งค่าไว้) และออก release พร้อม `BitGG.exe`, `SHA256SUMS.txt` และ provenance attestation ให้เอง นอกจากนี้ CI จะ build และรันเทสต์ให้ทุก push และทุก PR
+
+### Code signing (ไม่บังคับ)
+
+การเซ็นชื่อทำให้หายจากสถานะ "unknown publisher" และทำให้ชื่อเสียง (reputation) ของ SmartScreen สะสมไปที่ใบรับรองของคุณ แทนที่จะต้องเริ่มนับใหม่ทุกครั้งที่ออกไฟล์ใหม่ วิธีตั้งค่าคือเพิ่ม **repository secrets** 2 ตัว (Settings → Secrets and variables → Actions):
+
+| Secret | ค่า |
+|---|---|
+| `WINDOWS_CERT_PFX_BASE64` | ใบรับรอง code-signing (`.pfx`) ที่แปลงเป็น base64 |
+| `WINDOWS_CERT_PASSWORD` | รหัสผ่านของไฟล์ `.pfx` |
+
+สร้างค่า base64 ด้วย PowerShell:
+
+```powershell
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("C:\path\to\cert.pfx")) | Set-Clipboard
+```
+
+ตั้ง **variable** `TIMESTAMP_URL` เพิ่มได้ (ค่าเริ่มต้น `http://timestamp.digicert.com`) ถ้าไม่ได้ใส่ secrets ก็ยังออก release ได้ตามเดิมแบบไม่เซ็นชื่อ ขั้นตอนเซ็นชื่อ ([`.github/scripts/sign.ps1`](.github/scripts/sign.ps1)) ถ้าลายเซ็นผิดจะหยุด release ทันทีแทนที่จะปล่อยไฟล์ออกไป มี timestamp ทำให้ลายเซ็นยังใช้ได้แม้ใบรับรองหมดอายุ และไม่ทิ้ง private key ไว้บนดิสก์
+
+ใบรับรองหาได้จาก: CA สาธารณะ (OV/EV เช่น Sectigo, DigiCert, SSL.com ฯลฯ ตอนนี้ key ของ EV/OV มักต้องอยู่บน hardware token หรือ cloud HSM ซึ่งต้องใช้ขั้นตอนเซ็นอีกแบบ) หรือบริการ **Trusted Signing** ของ Microsoft ซึ่งเป็นตัวเลือกรายเดือนราคาถูกสำหรับคนทำคนเดียวหรือทีมเล็ก และต้องใช้ขั้นตอนเซ็นของมันเองแทน `.pfx` ส่วนใบรับรองแบบ self-signed **ไม่ช่วย** เรื่อง SmartScreen
+
+> หมายเหตุ: ตั้งแต่ปี 2024 แอปที่เซ็นชื่อแล้วก็ยังอาจเจอคำเตือน SmartScreen ได้ จนกว่าใบรับรองจะมีชื่อเสียงสะสมจากการดาวน์โหลดพอ การเซ็นชื่อคือสิ่งที่ทำให้สะสมชื่อเสียงได้
 
 ---
 

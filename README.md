@@ -80,16 +80,50 @@ The binary is at `target/release/bitgg.exe`.
 
 ---
 
-## Releasing (maintainers)
+## Branches & releases (maintainers)
 
-Push a version tag and GitHub Actions builds, tests (including the anti-cheat guard), and publishes the release with `BitGG.exe`, `SHA256SUMS.txt` and a provenance attestation:
+| Branch | Purpose |
+|---|---|
+| `main` | **Releases only.** Every `v*` tag is cut here; the release workflow refuses tags that aren't on `main`. |
+| `master` | Development. Start every piece of work from here. |
+| `<what-you-do>` | One branch per task, named after it (e.g. `code-signing`, `fix-mic-gain`). |
 
 ```sh
+git switch master && git pull
+git switch -c fix-mic-gain        # work, commit
+git push -u origin fix-mic-gain   # open a PR: fix-mic-gain -> master
+```
+
+When `master` is ready to ship, open a PR **`master` → `main`**, merge it, then tag on `main`:
+
+```sh
+git switch main && git pull
 git tag v0.2.0
 git push origin v0.2.0
 ```
 
-Every push/PR to `main` is also built and tested by CI.
+GitHub Actions then builds, tests (including the anti-cheat guard), signs (if configured), and publishes the release with `BitGG.exe`, `SHA256SUMS.txt` and a provenance attestation. CI also builds and tests every push and PR.
+
+### Code signing (optional)
+
+Signing removes the "unknown publisher" label and lets SmartScreen reputation build up on your certificate instead of on each new file. Add two **repository secrets** (Settings → Secrets and variables → Actions):
+
+| Secret | Value |
+|---|---|
+| `WINDOWS_CERT_PFX_BASE64` | your code-signing certificate (`.pfx`), base64-encoded |
+| `WINDOWS_CERT_PASSWORD` | the `.pfx` password |
+
+Create the base64 value in PowerShell:
+
+```powershell
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("C:\path\to\cert.pfx")) | Set-Clipboard
+```
+
+Optional repository **variable** `TIMESTAMP_URL` (default `http://timestamp.digicert.com`). Without the secrets, releases are published unsigned, as before. The signing step ([`.github/scripts/sign.ps1`](.github/scripts/sign.ps1)) fails the release rather than shipping a bad signature, timestamps the signature so it stays valid after the certificate expires, and never leaves the key on disk.
+
+Where to get a certificate: a code-signing certificate from a public CA (OV/EV, Sectigo, DigiCert, SSL.com and others; EV/OV keys now usually live on a hardware token or cloud HSM, which needs a different signing step), or Microsoft's **Trusted Signing** service, a cheap monthly option for individuals and small teams that also needs its own signing step instead of a `.pfx`. A self-signed certificate does **not** help with SmartScreen.
+
+> Note: since 2024, even signed apps can still see SmartScreen warnings until the certificate has built reputation from downloads. Signing is what makes that reputation possible.
 
 ---
 
