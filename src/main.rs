@@ -736,6 +736,10 @@ impl App {
         // tiny pixel logo
         ui.text_s(4, 3, "BIT", ORANGE);
         ui.text_s(28, 3, "GG", YELLOW);
+        // version from Cargo.toml, tiny, bottom-aligned with the logo
+        const VERSION: &str = concat!("v", env!("CARGO_PKG_VERSION"));
+        ui.text_tiny(48, 7, VERSION, BLACK); // shadow
+        ui.text_tiny(47, 6, VERSION, LGREY);
         let rec_on = self.rec.as_ref().map(|r| r.alive()).unwrap_or(false);
         if rec_on {
             let blink = (ui.frame / 10) % 2 == 0;
@@ -1531,7 +1535,7 @@ impl ApplicationHandler<UserEv> for App {
         }
         let s = if self.cfg.scale == 0 { 2 } else { self.cfg.scale };
         let attrs = Window::default_attributes()
-            .with_title("BitGG")
+            .with_title(concat!("BitGG v", env!("CARGO_PKG_VERSION")))
             .with_inner_size(LogicalSize::new((W as u32 * s) as f64, (H as u32 * s) as f64))
             .with_min_inner_size(LogicalSize::new(W as f64, H as f64))
             // main thread is MTA for Core Audio; OLE drag&drop would need STA
