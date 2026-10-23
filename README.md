@@ -4,6 +4,14 @@
 
 🇹🇭 ภาษาไทย: [README.th.md](README.th.md)
 
+<p align="center">
+  <img src="docs/screenshots/clips.png" alt="BitGG CLIPS tab: replay buffer, save hotkey, recording audio and mic levels" width="800">
+</p>
+
+| Mixer | Parametric EQ |
+|---|---|
+| <img src="docs/screenshots/mixer.png" alt="BitGG mixer: Game, Chat, Media, Aux, Mic and Master faders with meters and ChatMix" width="400"> | <img src="docs/screenshots/eq.png" alt="BitGG 10-band parametric EQ with the FPS preset" width="400"> |
+
 | | RAM | CPU (idle) |
 |---|---|---|
 | BitGG window open | ~26 MB | ~0 % |
@@ -103,6 +111,8 @@ git push origin v0.2.0
 ```
 
 GitHub Actions then builds, tests (including the anti-cheat guard), signs (if configured), and publishes the release with `BitGG.exe`, `SHA256SUMS.txt` and a provenance attestation. CI also builds and tests every push and PR.
+
+To refresh the README screenshots after UI changes, run `bitgg --screenshots <dir>`. It renders the CLIPS, MIXER and EQ tabs with a demo config (no personal paths or device names) as BMP; convert them to PNG into `docs/screenshots/`.
 
 ### Code signing (optional)
 
