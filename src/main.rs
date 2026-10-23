@@ -205,6 +205,7 @@ impl App {
     fn dirty(&mut self) {
         self.shared.update(&self.engine_params());
         self.sync_engine();
+        self.route_defaults();
         self.apply_direct(self.cfg.audio.engine_on, false);
         if self.dirty_since.is_none() {
             self.dirty_since = Some(Instant::now());
@@ -271,10 +272,37 @@ impl App {
     /// its own volume and default output back (engine off / quitting).
     fn apply_direct(&mut self, on: bool, force: bool) {
         let sessions = self.sessions.clone();
+        // Unassigned apps belong to GAME (like Sonar). When GAME is DSP they get
+        // there through the default device; when GAME is DIRECT we scale them.
+        let game_direct = !self.ch_live(0);
         for s in &sessions {
+            if on && game_direct && !self.cfg.audio.apps.contains_key(&s.name) {
+                // remember the app's own volume before we ever scale it
+                self.cfg.audio.apps.insert(s.name.clone(), config::AppCfg { ch: 0, vol: Some(s.vol) });
+            }
             let Some(ac) = self.cfg.audio.apps.get(&s.name).cloned() else { continue };
+            if ac.ch == 0 {
+                // unassigned: scaled as GAME while GAME is DIRECT, else its own volume
+                let Some(base) = ac.vol else { continue };
+                let scaled = on && game_direct;
+                if !scaled && !s.pids.iter().any(|p| self.applied.contains_key(p)) {
+                    continue; // never touched by us: leave it alone
+                }
+                let target = if scaled { base * self.direct_gain(0) } else { base };
+                for p in &s.pids {
+                    if force || self.applied.get(p).map(|v| (v - target).abs() > 0.002).unwrap_or(true) {
+                        win_audio::set_session(&self.devs, *p, Some(target), None);
+                    }
+                    if scaled {
+                        self.applied.insert(*p, target);
+                    } else {
+                        self.applied.remove(p);
+                    }
+                }
+                continue;
+            }
             let c = ac.ch as usize;
-            if c == 0 || c > 4 {
+            if c > 4 {
                 continue;
             }
             let base = match ac.vol {
@@ -315,8 +343,31 @@ impl App {
         }
     }
 
+    /// While the DSP engine runs: the device an app should be playing on
+    /// (its channel's virtual device; unassigned apps -> GAME). None = no rule.
+    fn expected_device(&self, s: &win_audio::Session) -> Option<String> {
+        self.engine.as_ref()?;
+        let c = self.app_ch(&s.name);
+        let ch = if c == 0 { 0 } else { c - 1 };
+        self.ch_live(ch).then(|| self.cfg.audio.ch[ch].source.clone())
+    }
+
+    /// Apps that kept their old audio stream (they only switch device when they
+    /// reopen it, e.g. Chromium-based apps and many games): they need a restart.
+    fn needs_restart(&self, s: &win_audio::Session) -> bool {
+        self.expected_device(s).map(|d| !s.devices.contains(&d)).unwrap_or(false)
+    }
+
     fn direct_peak(&self, ch: usize) -> f32 {
-        self.sessions.iter().filter(|s| self.app_ch(&s.name) == ch + 1).map(|s| s.live_peak()).fold(0.0, f32::max)
+        // unassigned apps count as GAME
+        self.sessions
+            .iter()
+            .filter(|s| {
+                let c = self.app_ch(&s.name);
+                c == ch + 1 || (ch == 0 && c == 0)
+            })
+            .map(|s| s.live_peak())
+            .fold(0.0, f32::max)
     }
 
     /// Meter for a mixer strip (0..3 channels, 4 mic, 5 master).
@@ -349,6 +400,8 @@ impl App {
         self.sessions = win_audio::list_sessions(&self.devs);
         self.routes = self.sessions.iter().flat_map(|s| s.pids.clone()).map(|p| (p, win_audio::get_app_output(p))).collect();
         self.last_refresh = Instant::now();
+        // follow a default-device change made in Windows
+        self.route_defaults();
         // newly started processes of an assigned program join their channel
         self.apply_direct(self.cfg.audio.engine_on, false);
     }
@@ -414,6 +467,54 @@ impl App {
         self.mic_applied = None;
         self.dirty();
         self.guard_defaults(false);
+    }
+
+    /// What Sonar does: while the DSP engine runs, Windows' default output is the
+    /// GAME virtual device (so every app that isn't assigned elsewhere goes
+    /// through GAME and the mixer/EQ) and the default mic is the virtual mic.
+    /// If the user picks a real device as default in Windows, BitGG adopts it as
+    /// its own output/mic input and points the default back at the virtual one.
+    fn route_defaults(&mut self) {
+        if self.engine.is_none() {
+            return; // guard_defaults() restores real devices when the engine is off
+        }
+        let is_phys = |a: &App, id: &str| a.devs.iter().any(|d| d.id == id && !win_audio::is_virtual(&d.name));
+        let mut changed = false;
+        if self.ch_live(0) {
+            let game = self.cfg.audio.ch[0].source.clone();
+            if let Some(def) = win_audio::default_id(true) {
+                if def != game {
+                    if is_phys(self, &def) && def != self.cfg.audio.output {
+                        *self.rec_msg.lock().unwrap() = format!("OUTPUT -> {}", self.dev_name(&def));
+                        self.cfg.audio.output = def;
+                        changed = true;
+                    }
+                    win_audio::set_default_device(&game);
+                }
+            }
+        }
+        if self.mic_live() {
+            let vmic = self
+                .devs
+                .iter()
+                .find(|d| !d.render && d.name.contains(MIC_DETECT))
+                .map(|d| d.id.clone());
+            if let (Some(vmic), Some(def)) = (vmic, win_audio::default_id(false)) {
+                if def != vmic {
+                    if is_phys(self, &def) && def != self.cfg.audio.mic.input {
+                        self.cfg.audio.mic.input = def;
+                        changed = true;
+                    }
+                    win_audio::set_default_device(&vmic);
+                }
+            }
+        }
+        if changed {
+            self.shared.update(&self.engine_params()); // engine rebuilds its streams
+            if self.dirty_since.is_none() {
+                self.dirty_since = Some(Instant::now());
+            }
+        }
     }
 
     /// Safety net: Windows' default output/mic may only be a virtual device while
@@ -676,8 +777,13 @@ impl App {
         if self.ui.toggle(r(300, y - 1, 94, 14), if on { "ENGINE ON" } else { "ENGINE OFF" }, &mut on, GREEN) {
             self.set_engine(on);
         }
+        let stuck: Vec<String> = self.sessions.iter().filter(|s| self.needs_restart(s)).map(|s| s.name.clone()).collect();
         if self.sonar_running {
             self.ui.text_s(6, 228, "QUIT GG SONAR FIRST (DOUBLE AUDIO)", ORANGE);
+        } else if !stuck.is_empty() {
+            let msg = format!("RESTART {} TO USE MIXER", if stuck.len() == 1 { stuck[0].to_uppercase() } else { format!("{} APPS", stuck.len()) });
+            self.ui.text_fit(6, 228, &msg, 48, ORANGE);
+            self.ui.tip(r(0, 224, W as i32, 12), &format!("STILL ON OLD DEVICE: {}", stuck.join(", ").to_uppercase()));
         }
         if changed {
             self.dirty();
@@ -710,6 +816,13 @@ impl App {
             let pk = (s.peak * 10.0).min(1.0);
             self.ui.fill(r(4, y + 2, 4, 7), if pk > 0.05 { GREEN } else { DGREY });
             self.ui.text_fit(12, y + 1, &s.name, 16, WHITE);
+            // routed to a channel but still playing elsewhere (e.g. Chromium apps
+            // only switch device after a restart): say so instead of failing silently
+            if self.needs_restart(&s) {
+                self.ui.fill(r(138, y + 1, 6, 8), ORANGE);
+                self.ui.text(138, y + 1, "!", BLACK);
+                self.ui.tip(r(4, y - 1, 140, 12), "NOT IN ITS CHANNEL YET: RESTART THIS APP");
+            }
             let cur = self.app_ch(&s.name);
             let col = if cur == 0 { LGREY } else { CH_COL[cur - 1] };
             let d = self.ui.spinner(r(146, y - 1, 88, 12), opts[cur], col);
@@ -732,13 +845,15 @@ impl App {
                     *self.rec_msg.lock().unwrap() = "TURN ENGINE ON (MIXER)".into();
                 }
             }
-            // assigned apps: the slider edits the app's own base volume (channel scales it)
-            let mut v = if cur != 0 { self.cfg.audio.apps.get(&s.name).and_then(|a| a.vol).unwrap_or(s.vol) } else { s.vol };
+            // apps a channel scales (assigned, or unassigned while GAME is DIRECT):
+            // the slider edits the app's own base volume, the channel scales it
+            let scaled = cur != 0 || (self.cfg.audio.engine_on && !self.ch_live(0));
+            let base = self.cfg.audio.apps.get(&s.name).and_then(|a| a.vol);
+            let mut v = if scaled { base.unwrap_or(s.vol) } else { s.vol };
             if self.ui.hslider(id("appvol", s.pid as usize), r(240, y - 1, 110, 12), &mut v, col) {
-                if cur != 0 {
-                    if let Some(a) = self.cfg.audio.apps.get_mut(&s.name) {
-                        a.vol = Some(v);
-                    }
+                if scaled {
+                    let e = self.cfg.audio.apps.entry(s.name.clone()).or_default();
+                    e.vol = Some(v);
                     self.dirty();
                 } else {
                     for p in &s.pids {
@@ -746,6 +861,12 @@ impl App {
                     }
                     if let Some(x) = self.sessions.iter_mut().find(|x| x.pid == s.pid) {
                         x.vol = v;
+                    }
+                    // keep a stored base in sync so a later restore doesn't undo this
+                    if let Some(e) = self.cfg.audio.apps.get_mut(&s.name) {
+                        if e.vol.is_some() {
+                            e.vol = Some(v);
+                        }
                     }
                 }
             }
@@ -762,6 +883,7 @@ impl App {
         if total > rows {
             self.ui.text(330, 36, &format!("{}/{}", self.apps_scroll + 1, total - rows + 1), DGREY);
         }
+        self.ui.text(6, 211, "DEFAULT = GAME CHANNEL (LIKE SONAR)", DGREY);
         self.ui.text(6, 220, "CHANNEL W/ VIRTUAL DEVICE = ROUTED + EQ", DGREY);
         self.ui.text(6, 229, "NO DEVICE = DIRECT: MIXER SCALES APP VOL", DGREY);
     }
@@ -1740,9 +1862,165 @@ fn screenshots(out: &std::path::Path) {
     println!("screenshots written to {}", out.display());
 }
 
+/// DIRECT mode with an UNASSIGNED app: it must follow the GAME fader.
+fn directtest_unassigned() {
+    let tmp = std::env::temp_dir().join("bitgg-directtest2");
+    let _ = std::fs::create_dir_all(&tmp);
+    std::env::set_var("APPDATA", &tmp);
+    // the APPS list hides "bitgg" itself, so run the tone child under another name
+    let exe = tmp.join("tonechild.exe");
+    let _ = std::fs::copy(std::env::current_exe().unwrap(), &exe);
+    let mut child = std::process::Command::new(&exe).arg("--silent").spawn().expect("child");
+    std::thread::sleep(Duration::from_millis(1500));
+    let mut a = App::new(Config::default());
+    // force every channel (and the mic) to DIRECT: no virtual devices
+    for c in a.cfg.audio.ch.iter_mut() {
+        c.source.clear();
+    }
+    a.cfg.audio.mic.target.clear();
+    a.dirty();
+    let vol = |a: &App| win_audio::list_sessions(&a.devs).iter().find(|x| x.pids.contains(&child.id())).map(|x| x.vol);
+    println!("unassigned child, before engine: vol={:?}  engine thread={}", vol(&a), a.engine.is_some());
+    a.set_engine(true);
+    println!("engine ON (GAME 85%, master 90%): vol={:?} expect {:.3}", vol(&a), 0.85 * 0.9);
+    a.cfg.audio.ch[0].vol = 0.5;
+    a.dirty();
+    println!("GAME fader 50%:  vol={:?} expect {:.3}", vol(&a), 0.5 * 0.9);
+    a.cfg.audio.master_mute = true;
+    a.dirty();
+    println!("MASTER mute:     vol={:?} expect 0", vol(&a));
+    a.cfg.audio.master_mute = false;
+    a.set_engine(false);
+    println!("engine OFF:      vol={:?} expect 1.000 (own volume back)", vol(&a));
+    let _ = child.kill();
+    let _ = child.wait();
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+/// Child helper: very quiet 440 Hz tone on whatever is the default output now.
+fn quiet_tone(secs: u64) {
+    let Some(id) = win_audio::default_id(true) else { return };
+    let Ok(mut r) = wasapi::Render::new(&id, false, 100) else { return };
+    let mut ph = 0f32;
+    let t = Instant::now();
+    while t.elapsed() < Duration::from_secs(secs) {
+        let n = r.free_frames().unwrap_or(0) as usize;
+        let mut v = Vec::with_capacity(n * 2);
+        for _ in 0..n {
+            let x = (ph * std::f32::consts::TAU).sin() * 0.03;
+            ph = (ph + 440.0 / 48000.0).fract();
+            v.push(x);
+            v.push(x);
+        }
+        let _ = r.write(&v);
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// DSP mode end to end on the real config: unassigned apps must reach GAME
+/// through the default device, and the GAME fader must change what you hear.
+/// Does not save the config; restores Windows' defaults at the end.
+fn dsptest() {
+    let devs0 = win_audio::list_devices();
+    let nm = |id: &str| devs0.iter().find(|d| d.id == id).map(|d| d.name.replace(" (SteelSeries Sonar Virtual Audio Device)", "")).unwrap_or(id.to_string());
+    println!("before: default output = {}", nm(&win_audio::default_id(true).unwrap_or_default()));
+    let mut a = App::new(Config::load());
+    if !a.cfg.audio.engine_on {
+        a.set_engine(true);
+    }
+    std::thread::sleep(Duration::from_secs(3));
+    a.refresh();
+    println!("engine running: {}  GAME is DSP: {}", a.engine.is_some(), a.ch_live(0));
+    println!("after start: default output = {}   BitGG output = {}", nm(&win_audio::default_id(true).unwrap_or_default()), nm(&a.cfg.audio.output));
+    for s in a.sessions.iter().filter(|s| s.live_peak() > 0.0 || s.name.contains("stove")) {
+        println!("  app {:<18} now plays on {}", s.name, nm(&s.device));
+    }
+    let hear = |id: &str| -> f32 {
+        let Ok(mut c) = wasapi::Capture::new(id, true) else { return -1.0 };
+        let mut q = std::collections::VecDeque::new();
+        let t = Instant::now();
+        while t.elapsed() < Duration::from_secs(3) {
+            let _ = c.drain(&mut q);
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        q.iter().fold(0.0f32, |m, x| m.max(x.abs()))
+    };
+    // an app started now opens the new default device -> must land in GAME
+    let exe = std::env::temp_dir().join("tonechild.exe");
+    let _ = std::fs::copy(std::env::current_exe().unwrap(), &exe);
+    let mut child = std::process::Command::new(&exe).arg("--quiet-tone").spawn().expect("child");
+    std::thread::sleep(Duration::from_millis(1500));
+    a.refresh();
+    if let Some(s) = a.sessions.iter().find(|s| s.pids.contains(&child.id())) {
+        println!("  NEW app (started after engine on) plays on {}", nm(&s.device));
+    }
+    for s in &a.sessions {
+        println!("  {:<18} needs restart: {}", if s.pids.contains(&child.id()) { "NEW test app" } else { s.name.as_str() }, a.needs_restart(s));
+    }
+    let out = a.cfg.audio.output.clone();
+    let orig = a.cfg.audio.ch[0].vol;
+    a.cfg.audio.ch[0].vol = 1.0;
+    a.dirty();
+    std::thread::sleep(Duration::from_millis(500));
+    let full = hear(&out);
+    println!("GAME 100%: GAME meter {:.3}, what you hear {:.3}", a.shared.meter(0), full);
+    a.cfg.audio.ch[0].vol = 0.2;
+    a.dirty();
+    std::thread::sleep(Duration::from_millis(500));
+    let low = hear(&out);
+    println!("GAME  20%: GAME meter {:.3}, what you hear {:.3}  (expected ~{:.3})", a.shared.meter(0), low, full * dsp::fader_to_lin(0.2));
+    a.cfg.audio.ch[0].vol = orig;
+    let _ = child.kill();
+    let _ = child.wait();
+    let _ = std::fs::remove_file(&exe);
+    // clean shutdown, as on Exit
+    a.apply_direct(false, true);
+    if let Some(mut e) = a.engine.take() {
+        e.stop();
+    }
+    a.guard_defaults(true);
+    println!("after stop: default output = {}", nm(&win_audio::default_id(true).unwrap_or_default()));
+}
+
+/// Read-only: where does each app's sound actually go right now?
+fn diag() {
+    let devs = win_audio::list_devices();
+    let name = |id: &str| {
+        if id.is_empty() {
+            return "(Windows default)".to_string();
+        }
+        devs.iter().find(|d| d.id == id).map(|d| d.name.replace(" (SteelSeries Sonar Virtual Audio Device)", "")).unwrap_or(format!("? {id}"))
+    };
+    println!("default output: {}", name(&win_audio::default_id(true).unwrap_or_default()));
+    println!("default mic:    {}", name(&win_audio::default_id(false).unwrap_or_default()));
+    let sessions = win_audio::list_sessions(&devs);
+    std::thread::sleep(Duration::from_millis(300));
+    for s in &sessions {
+        let pk = (0..10).map(|_| { std::thread::sleep(Duration::from_millis(50)); s.live_peak() }).fold(0.0f32, f32::max);
+        println!("app {:<20} vol {:.2} mute {:<5} peak {:.3}  plays on: {:<40} pinned: {}", s.name, s.vol, s.mute, pk, name(&s.device),
+            s.pids.iter().map(|p| name(&win_audio::get_app_output(*p))).collect::<Vec<_>>().join(", "));
+    }
+}
+
 fn main() {
     win_audio::com_init();
     let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(|s| s == "--directtest2").unwrap_or(false) {
+        directtest_unassigned();
+        return;
+    }
+    if args.get(1).map(|s| s == "--quiet-tone").unwrap_or(false) {
+        quiet_tone(12);
+        return;
+    }
+    if args.get(1).map(|s| s == "--dsptest").unwrap_or(false) {
+        dsptest();
+        return;
+    }
+    if args.get(1).map(|s| s == "--diag").unwrap_or(false) {
+        diag();
+        return;
+    }
     if args.get(1).map(|s| s == "--screenshots").unwrap_or(false) {
         screenshots(std::path::Path::new(args.get(2).map(|s| s.as_str()).unwrap_or("screenshots")));
         return;

@@ -123,6 +123,8 @@ pub struct Session {
     pub peak: f32,
     /// Endpoint the session currently plays on.
     pub device: String,
+    /// Every endpoint this app has a live (non-expired) session on.
+    pub devices: Vec<String>,
     /// Live peak meters (one per audio session of this app) for smooth UI meters.
     pub meters: Vec<IAudioMeterInformation>,
 }
@@ -197,9 +199,12 @@ pub fn list_sessions(devs: &[Dev]) -> Vec<Session> {
                         s.pids.push(pid);
                     }
                     s.meters.extend(meter);
+                    if !s.devices.contains(&d.id) {
+                        s.devices.push(d.id.clone());
+                    }
                     continue;
                 }
-                out.push(Session { pid, pids: vec![pid], name, vol, mute, peak, device: d.id.clone(), meters: meter.into_iter().collect() });
+                out.push(Session { pid, pids: vec![pid], name, vol, mute, peak, device: d.id.clone(), devices: vec![d.id.clone()], meters: meter.into_iter().collect() });
             }
         }
     }
