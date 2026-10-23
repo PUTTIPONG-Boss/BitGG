@@ -20,7 +20,7 @@ The whole app is a single ~1 MB `.exe` with no dependencies.
 
 BitGG is **portable** — there is nothing to install and it never needs admin rights.
 
-1. Download **`BitGG.exe`** — from the [Releases](../../releases) page, or directly from [`dist/BitGG.exe`](dist/BitGG.exe) in this repo.
+1. Download **[BitGG.exe](https://github.com/PUTTIPONG-Boss/BitGG/releases/latest/download/BitGG.exe)** (always the latest release; all versions are on the [Releases](../../releases) page).
 2. Double-click it. The window opens and it works right away.
 3. (Optional) Go to the **SETUP** tab and click **ADD SHORTCUTS** for Desktop + Start Menu icons, or turn on **STARTUP** to launch it (in the tray) when you log in.
 
@@ -32,7 +32,7 @@ BitGG is open source and clean — but it is a brand-new, **unsigned** native ap
 
 - Click **More info → Run anyway** on the SmartScreen dialog, **or**
 - **Build it yourself** from source (below) so you are running exactly the code you can read, **or**
-- Verify the download against the SHA-256 published on the Releases page.
+- Verify the download: every release lists its SHA-256, and is built by GitHub Actions with a signed provenance attestation. With the [GitHub CLI](https://cli.github.com): `gh attestation verify BitGG.exe -R PUTTIPONG-Boss/BitGG`.
 
 BitGG does not obfuscate or pack its binary, does not phone home, and the one feature that looks like a keylogger — a global keyboard hook — is **off by default**. See [Is it safe?](#is-it-safe) below.
 
@@ -77,6 +77,19 @@ The binary is at `target/release/bitgg.exe`.
 
 - The app icon is embedded via `build.rs` using **windres** (part of the MinGW toolchain). If windres isn't present (e.g. a pure MSVC setup), the build still succeeds — just without the embedded icon.
 - If your checkout path is very long (Windows `MAX_PATH`), point the build output somewhere short: create `.cargo/config.toml` with `[build]` and `target-dir = "C:/bitgg-target"`.
+
+---
+
+## Releasing (maintainers)
+
+Push a version tag and GitHub Actions builds, tests (including the anti-cheat guard), and publishes the release with `BitGG.exe`, `SHA256SUMS.txt` and a provenance attestation:
+
+```sh
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+Every push/PR to `main` is also built and tested by CI.
 
 ---
 

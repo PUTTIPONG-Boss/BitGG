@@ -20,7 +20,7 @@
 
 BitGG เป็นแบบ **portable** คือไม่ต้องติดตั้ง และไม่ต้องใช้สิทธิ์ admin เลย
 
-1. โหลด **`BitGG.exe`** จากหน้า [Releases](../../releases) หรือโหลดตรงจาก [`dist/BitGG.exe`](dist/BitGG.exe) ในรีโปนี้
+1. โหลด **[BitGG.exe](https://github.com/PUTTIPONG-Boss/BitGG/releases/latest/download/BitGG.exe)** (ลิงก์นี้ได้เวอร์ชันล่าสุดเสมอ ส่วนทุกเวอร์ชันอยู่ในหน้า [Releases](../../releases))
 2. ดับเบิลคลิกเปิด หน้าต่างจะขึ้นมาและใช้งานได้ทันที
 3. (ถ้าต้องการ) ไปแท็บ **SETUP** กด **ADD SHORTCUTS** เพื่อสร้างไอคอนบน Desktop และ Start Menu หรือเปิด **STARTUP** เพื่อให้เปิดเอง (เข้าไปอยู่ใน tray) ตอน login
 
@@ -32,7 +32,7 @@ BitGG เป็น open source และสะอาด แต่เป็นโ
 
 - บนหน้าต่าง SmartScreen กด **More info → Run anyway** หรือ
 - **build เองจาก source** (ดูด้านล่าง) จะได้รันโค้ดที่อ่านเองได้ทุกบรรทัด หรือ
-- ตรวจไฟล์ที่โหลดมาเทียบกับค่า SHA-256 ที่ลงไว้ในหน้า Releases
+- ตรวจไฟล์ที่โหลดมา: ทุก release มีค่า SHA-256 และ build โดย GitHub Actions พร้อม provenance attestation ที่เซ็นรับรองไว้ ถ้ามี [GitHub CLI](https://cli.github.com) ตรวจได้ด้วย `gh attestation verify BitGG.exe -R PUTTIPONG-Boss/BitGG`
 
 BitGG ไม่ obfuscate หรือ pack ไฟล์ ไม่ส่งข้อมูลออกเน็ต และฟีเจอร์เดียวที่ดูเหมือน keylogger คือ global keyboard hook นั้น **ปิดไว้โดยปริยาย** ดูหัวข้อ [ปลอดภัยไหม](#ปลอดภัยไหม) ด้านล่าง
 
@@ -77,6 +77,19 @@ cargo build --release
 
 - ไอคอนฝังด้วย `build.rs` ผ่าน **windres** (มากับ MinGW) ถ้าไม่มี windres (เช่นใช้ MSVC ล้วน) ก็ build ผ่านอยู่ แค่ไม่มีไอคอนฝัง
 - ถ้า path ของโปรเจกต์ยาวเกิน (`MAX_PATH` ของ Windows) ให้ชี้ output ไปที่สั้น ๆ โดยสร้าง `.cargo/config.toml` ใส่ `[build]` กับ `target-dir = "C:/bitgg-target"`
+
+---
+
+## ออก Release (สำหรับคนดูแลโปรเจกต์)
+
+push tag เวอร์ชันขึ้นไป แล้ว GitHub Actions จะ build, รันเทสต์ (รวมเทสต์กัน anti-cheat) และออก release พร้อม `BitGG.exe`, `SHA256SUMS.txt` และ provenance attestation ให้เอง
+
+```sh
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+ทุกครั้งที่ push หรือเปิด PR เข้า `main` จะมี CI build และรันเทสต์ให้ด้วย
 
 ---
 

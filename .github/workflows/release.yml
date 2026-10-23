@@ -1,0 +1,67 @@
+name: Release
+
+# Push a version tag to publish a release:
+#   git tag v0.2.0 && git push origin v0.2.0
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write      # create the GitHub Release
+  id-token: write      # sign the build-provenance attestation
+  attestations: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust (stable)
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+
+      - name: Build
+        run: cargo build --release --locked
+
+      # includes tests/no_game_injection.rs (anti-cheat guard): no release if it fails
+      - name: Test
+        run: cargo test --release --locked
+
+      - name: Package
+        run: |
+          mkdir out
+          cp target/release/bitgg.exe out/BitGG.exe
+          cd out && sha256sum BitGG.exe > SHA256SUMS.txt && cat SHA256SUMS.txt
+
+      # Lets anyone verify the exe was built by this workflow from this repo:
+      #   gh attestation verify BitGG.exe -R ${{ github.repository }}
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-path: out/BitGG.exe
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          SHA=$(cut -d' ' -f1 out/SHA256SUMS.txt)
+          cat > notes.md <<EOF
+          ## Download
+          **[BitGG.exe](https://github.com/${{ github.repository }}/releases/download/${TAG}/BitGG.exe)**: portable, no install, no admin. Double-click to run.
+
+          SHA-256: \`${SHA}\`
+
+          Built by GitHub Actions from commit ${{ github.sha }}. Verify it came from this repo:
+          \`\`\`
+          gh attestation verify BitGG.exe -R ${{ github.repository }}
+          \`\`\`
+
+          **SmartScreen warning?** The exe is not code-signed yet, so Windows may show "Windows protected your PC" until it builds reputation. Click *More info → Run anyway*, or build from source. See the README (EN/TH).
+
+          EOF
+          gh release create "$TAG" out/BitGG.exe out/SHA256SUMS.txt \
+            --title "BitGG $TAG" --notes-file notes.md --generate-notes
