@@ -16,7 +16,13 @@ param(
 $ErrorActionPreference = 'Stop'
 $vbox = "$env:ProgramFiles\Oracle\VirtualBox\VBoxManage.exe"
 if (-not (Test-Path $vbox)) { throw 'VirtualBox is not installed (winget install Oracle.VirtualBox).' }
-function VB { & $vbox @args; if ($LASTEXITCODE -ne 0) { throw "VBoxManage $($args[0]) failed ($LASTEXITCODE)" } }
+# VBoxManage writes progress to stderr; PowerShell 5.1 would turn that into an error.
+function VB {
+    $ErrorActionPreference = 'Continue'
+    # (unattended install echoes the password; keep it in the login file only)
+    & $vbox @args 2>&1 | ForEach-Object { "$_" } | Where-Object { $_ -notmatch 'password\s*=' } | Out-Host
+    if ($LASTEXITCODE -ne 0) { throw "VBoxManage $($args[0]) failed ($LASTEXITCODE)" }
+}
 
 if ((& $vbox list vms) -match "`"$Name`"") { throw "VM '$Name' already exists." }
 if (-not (Test-Path $Iso)) { throw "ISO not found: $Iso" }
