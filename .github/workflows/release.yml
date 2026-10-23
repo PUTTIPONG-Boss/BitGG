@@ -39,6 +39,15 @@ jobs:
             exit 1
           fi
 
+      # the app shows its version from Cargo.toml; the tag must say the same
+      - name: Tag must match Cargo.toml version
+        run: |
+          VER=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+          if [ "$GITHUB_REF_NAME" != "v$VER" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match Cargo.toml version $VER. Bump Cargo.toml (or tag v$VER)."
+            exit 1
+          fi
+
       - name: Install Rust (stable)
         run: rustup toolchain install stable --profile minimal && rustup default stable
 

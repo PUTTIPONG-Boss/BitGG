@@ -102,12 +102,16 @@ git switch -c fix-mic-gain        # ทำงาน, commit
 git push -u origin fix-mic-gain   # เปิด PR: fix-mic-gain -> master
 ```
 
-พอ `master` พร้อมออกเวอร์ชัน ให้เปิด PR **`master` → `main`** แล้ว merge จากนั้น tag บน `main`:
+พอ `master` พร้อมออกเวอร์ชัน:
+
+1. **เพิ่มเลขเวอร์ชัน** ใน `Cargo.toml` (ทำบน branch แล้ว PR เข้า `master`) เลขนี้คือเลขที่แสดงข้างโลโก้และบนแถบชื่อหน้าต่าง แก้บั๊กใช้ `0.1.0 → 0.1.1` เพิ่มฟีเจอร์ใหม่ใช้ `0.1.x → 0.2.0`
+2. เปิด PR **`master` → `main`** แล้ว merge
+3. tag บน `main` ด้วยเลข**เดียวกัน** (ถ้า tag ไม่ตรงกับ `Cargo.toml` workflow จะไม่ยอมออก release)
 
 ```sh
 git switch main && git pull
-git tag v0.2.0
-git push origin v0.2.0
+git tag v0.1.1
+git push origin v0.1.1
 ```
 
 GitHub Actions จะ build, รันเทสต์ (รวมเทสต์กัน anti-cheat), เซ็นชื่อ (ถ้าตั้งค่าไว้) และออก release พร้อม `BitGG.exe`, `SHA256SUMS.txt` และ provenance attestation ให้เอง นอกจากนี้ CI จะ build และรันเทสต์ให้ทุก push และทุก PR

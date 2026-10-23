@@ -167,6 +167,43 @@ impl Ui {
         cx - x
     }
 
+    /// Tiny 3x5 pixel text for version numbers: digits, '.', 'v', '-'.
+    /// Returns width in pixels.
+    pub fn text_tiny(&mut self, x: i32, y: i32, s: &str, c: u32) -> i32 {
+        // each row: 3 bits, bit 2 = leftmost pixel
+        fn glyph(ch: char) -> Option<(i32, [u8; 5])> {
+            Some(match ch {
+                '0' => (3, [0b111, 0b101, 0b101, 0b101, 0b111]),
+                '1' => (3, [0b010, 0b110, 0b010, 0b010, 0b111]),
+                '2' => (3, [0b111, 0b001, 0b111, 0b100, 0b111]),
+                '3' => (3, [0b111, 0b001, 0b111, 0b001, 0b111]),
+                '4' => (3, [0b101, 0b101, 0b111, 0b001, 0b001]),
+                '5' => (3, [0b111, 0b100, 0b111, 0b001, 0b111]),
+                '6' => (3, [0b111, 0b100, 0b111, 0b101, 0b111]),
+                '7' => (3, [0b111, 0b001, 0b001, 0b010, 0b010]),
+                '8' => (3, [0b111, 0b101, 0b111, 0b101, 0b111]),
+                '9' => (3, [0b111, 0b101, 0b111, 0b001, 0b111]),
+                'v' | 'V' => (3, [0b000, 0b000, 0b101, 0b101, 0b010]),
+                '-' => (3, [0b000, 0b000, 0b111, 0b000, 0b000]),
+                '.' => (1, [0b000, 0b000, 0b000, 0b000, 0b100]),
+                _ => return None,
+            })
+        }
+        let mut cx = x;
+        for ch in s.chars() {
+            let Some((w, rows)) = glyph(ch) else { continue };
+            for (ry, bits) in rows.iter().enumerate() {
+                for col in 0..w {
+                    if bits & (0b100 >> col) != 0 {
+                        self.put(cx + col, y + ry as i32, c);
+                    }
+                }
+            }
+            cx += w + 1;
+        }
+        cx - x
+    }
+
     /// Text with a 1px drop shadow — the classic arcade look.
     pub fn text_s(&mut self, x: i32, y: i32, s: &str, c: u32) -> i32 {
         self.text(x + 1, y + 1, s, BLACK);

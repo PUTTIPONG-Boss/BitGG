@@ -102,12 +102,16 @@ git switch -c fix-mic-gain        # work, commit
 git push -u origin fix-mic-gain   # open a PR: fix-mic-gain -> master
 ```
 
-When `master` is ready to ship, open a PR **`master` → `main`**, merge it, then tag on `main`:
+When `master` is ready to ship:
+
+1. **Bump the version** in `Cargo.toml` (on a branch, PR into `master`). It's the version shown next to the logo and in the title bar. Use `0.1.0 → 0.1.1` for fixes, `0.1.x → 0.2.0` for new features.
+2. Open a PR **`master` → `main`** and merge it.
+3. Tag on `main` with the **same** version (the release workflow refuses a tag that doesn't match `Cargo.toml`):
 
 ```sh
 git switch main && git pull
-git tag v0.2.0
-git push origin v0.2.0
+git tag v0.1.1
+git push origin v0.1.1
 ```
 
 GitHub Actions then builds, tests (including the anti-cheat guard), signs (if configured), and publishes the release with `BitGG.exe`, `SHA256SUMS.txt` and a provenance attestation. CI also builds and tests every push and PR.

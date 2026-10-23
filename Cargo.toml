@@ -1,6 +1,6 @@
 [package]
 name = "bitgg"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "8-bit pixel-art, ultra-light local replacement for SteelSeries GG Sonar (audio mixer/router/EQ) and Moments (replay buffer / recorder)"
 
