@@ -95,6 +95,27 @@ cargo build --release
 
 ---
 
+## Anti-cheat และความปลอดภัยกับเกม
+
+BitGG ออกแบบให้ **ไม่แตะ process ของเกมเลย** ใช้แนวทาง "ทำงานจากนอกเกม" แบบเดียวกับ volume mixer และ Game Bar ของ Windows ซึ่ง*ต่าง*จาก GG Moments และ overlay ส่วนใหญ่ (GG มี `SteelSeriesGameOverlay.dll` ที่ inject เข้าไปในเกม)
+
+| BitGG ทำอะไร | ทำผ่านอะไร | แตะเกมไหม |
+|---|---|---|
+| ปรับเสียง/mute/แยกเสียงรายแอป | Windows audio service (`ISimpleAudioVolume`, `AudioPolicyConfig`) | ❌ ไม่ |
+| ชื่อแอปในหน้า APPS | อ่าน process snapshot ของระบบครั้งเดียว (Toolhelp) | ❌ ไม่ (ไม่เคยเปิด handle ไปที่เกม) |
+| จับภาพหน้าจอ | DXGI Desktop Duplication (จับภาพหน้าจอที่ประกอบเสร็จแล้ว) | ❌ ไม่ |
+| อัดเสียงเกม | WASAPI loopback ของอุปกรณ์เสียง | ❌ ไม่ |
+| ปุ่ม save | `RegisterHotKey` (ระดับ OS) | ❌ ไม่ |
+| keyboard hook (เสริม, **ปิด**ไว้โดยปริยาย) | `WH_KEYBOARD_LL` ทำงานใน BitGG เอง ไม่ inject | ❌ ไม่ |
+
+ไม่มี DLL injection, ไม่อ่าน/เขียน memory ของเกม, ไม่สร้าง thread ในเกม, ไม่ hook Present/swap-chain และไม่มี overlay ในเกม มีเทสต์ [`tests/no_game_injection.rs`](tests/no_game_injection.rs) สแกน source ทุกครั้งที่ build ถ้ามี API พวกนี้โผล่มาเมื่อไร เทสต์จะ fail ทันที
+
+**ข้อจำกัดที่ต้องบอกตรง ๆ:**
+- BitGG ไม่แก้ไขเกม แต่ **EULA เป็นของแต่ละเกม** anti-cheat ระดับ kernel (Vanguard, EAC, BattlEye ฯลฯ) ไม่ flag API ข้างบน ซึ่งเป็นตัวเดียวกับที่ OBS, Discord และ Game Bar ใช้ แต่ไม่มีโปรแกรม third-party ไหน*การันตี*พฤติกรรมในอนาคตของ anti-cheat แต่ละเจ้าได้
+- ถ้า anti-cheat บางเกมบล็อกการจับภาพเกมตัวเอง (เจอน้อย) คลิปจะเป็นภาพดำ ไม่มีอะไรโดน flag แค่จับภาพไม่ได้
+- **KEY HOOK** (เสริม) เป็น low-level keyboard hook มาตรฐาน กลไกเดียวกับ push-to-talk ของ Discord ปิดไว้โดยปริยาย และไม่ต้องเปิด ยกเว้นกรณีที่ปุ่ม save ทุกปุ่มถูกจองหมด
+- BitGG ไม่มีฟีเจอร์ GameSense / RGB และไม่คุยกับ SteelSeries Engine
+
 ## License
 
 [MIT](LICENSE) ส่วน SteelSeries, Sonar, GG และ Moments เป็นเครื่องหมายการค้าของเจ้าของนั้น ๆ BitGG เป็นโปรเจกต์ทำงานร่วม (interoperability) แบบอิสระ

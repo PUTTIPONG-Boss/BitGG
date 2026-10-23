@@ -16,7 +16,6 @@ use windows::Win32::Foundation::{CloseHandle, BOOL};
 use windows::Win32::Media::Audio::Endpoints::{IAudioEndpointVolume, IAudioMeterInformation};
 use windows::Win32::Media::Audio::*;
 use windows::Win32::System::Com::*;
-use windows::Win32::System::Threading::{OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_FORMAT, PROCESS_QUERY_LIMITED_INFORMATION};
 use windows::Win32::System::WinRT::RoGetActivationFactory;
 
 pub fn com_init() {
@@ -134,30 +133,34 @@ impl Session {
     }
 }
 
-pub fn process_name(pid: u32) -> String {
-    if pid == 0 {
-        return "SYSTEM".into();
-    }
+/// pid -> exe name for every running process, from one Toolhelp snapshot.
+///
+/// Deliberately does NOT OpenProcess() each pid: the audio sessions include the
+/// game, and anti-cheats (EAC, BattlEye, Vanguard...) watch for handles opened
+/// to the game process. A snapshot is a kernel list read; it touches no process.
+pub fn process_names() -> std::collections::HashMap<u32, String> {
+    use windows::Win32::System::Diagnostics::ToolHelp::*;
+    let mut m = std::collections::HashMap::new();
     unsafe {
-        let Ok(h) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else {
-            return format!("PID {pid}");
-        };
-        let mut buf = [0u16; 520];
-        let mut len = buf.len() as u32;
-        let r = QueryFullProcessImageNameW(h, PROCESS_NAME_FORMAT(0), PWSTR(buf.as_mut_ptr()), &mut len);
-        let _ = CloseHandle(h);
-        if r.is_err() {
-            return format!("PID {pid}");
+        let Ok(snap) = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) else { return m };
+        let mut e = PROCESSENTRY32W { dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32, ..Default::default() };
+        let mut ok = Process32FirstW(snap, &mut e).is_ok();
+        while ok {
+            let len = e.szExeFile.iter().position(|&c| c == 0).unwrap_or(e.szExeFile.len());
+            let file = String::from_utf16_lossy(&e.szExeFile[..len]);
+            let name = file.strip_suffix(".exe").or_else(|| file.strip_suffix(".EXE")).unwrap_or(&file).to_string();
+            m.insert(e.th32ProcessID, name);
+            ok = Process32NextW(snap, &mut e).is_ok();
         }
-        let full = String::from_utf16_lossy(&buf[..len as usize]);
-        let file = full.rsplit('\\').next().unwrap_or(&full);
-        file.trim_end_matches(".exe").trim_end_matches(".EXE").to_string()
+        let _ = CloseHandle(snap);
     }
+    m
 }
 
 /// All active (non-expired) app sessions on every render endpoint.
 pub fn list_sessions(devs: &[Dev]) -> Vec<Session> {
     let mut out: Vec<Session> = Vec::new();
+    let names = process_names();
     for d in devs.iter().filter(|d| d.render) {
         unsafe {
             let Ok(dev) = device(&d.id) else { continue };
@@ -177,7 +180,7 @@ pub fn list_sessions(devs: &[Dev]) -> Vec<Session> {
                 if pid == 0 || pid == std::process::id() {
                     continue;
                 }
-                let name = process_name(pid);
+                let name = names.get(&pid).cloned().unwrap_or_else(|| format!("PID {pid}"));
                 // audiodg = Sonar's own APO stream; GG helpers are noise here
                 if name.eq_ignore_ascii_case("audiodg") || name.eq_ignore_ascii_case("bitgg") || name.starts_with("SteelSeries") {
                     continue;

@@ -95,6 +95,27 @@ If your antivirus quarantines it and you want to help, submit it as a false posi
 
 ---
 
+## Anti-cheat & game safety
+
+BitGG is built so it **never touches a game process**, the same "outside the game" approach as Windows' own volume mixer and Game Bar, and *not* the way GG Moments / most overlays work (GG ships `SteelSeriesGameOverlay.dll` and injects it into games).
+
+| What BitGG does | How | Touches the game? |
+|---|---|---|
+| Per-app volume, mute, routing | Windows audio service (`ISimpleAudioVolume`, `AudioPolicyConfig`) | ❌ No |
+| App names in the APPS list | One system process snapshot (Toolhelp) | ❌ No (no handle is ever opened to the game) |
+| Screen capture | DXGI Desktop Duplication (captures the finished desktop image) | ❌ No |
+| Game audio capture | WASAPI loopback of the output device | ❌ No |
+| Save hotkey | `RegisterHotKey` (OS-level) | ❌ No |
+| Optional keyboard hook (**off** by default) | `WH_KEYBOARD_LL`: runs inside BitGG, not injected | ❌ No |
+
+No DLL injection, no memory reading/writing, no remote threads, no Present/swap-chain hooks, no in-game overlay. A test in [`tests/no_game_injection.rs`](tests/no_game_injection.rs) scans the source on every build and fails if any of those APIs ever appear.
+
+**Honest limits:**
+- BitGG doesn't modify games, but **each game's EULA is the game's own**. Kernel anti-cheats (Vanguard, EAC, BattlEye...) don't flag the APIs above, the same ones OBS, Discord and Game Bar use, but no third-party tool can *guarantee* a specific anti-cheat's future behaviour.
+- If an anti-cheat blocks screen capture of its game (rare), the clip will show a black frame. Nothing gets flagged; the capture just doesn't get the image.
+- The optional **KEY HOOK** is a standard low-level keyboard hook (the same mechanism as Discord push-to-talk). It is off by default; leave it off unless every save hotkey is taken.
+- BitGG has no GameSense / RGB features. It never talks to SteelSeries Engine.
+
 ## License
 
 [MIT](LICENSE). SteelSeries, Sonar, GG and Moments are trademarks of their respective owners; BitGG is an independent interoperability project.
