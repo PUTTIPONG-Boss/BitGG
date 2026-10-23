@@ -9,7 +9,7 @@ param(
     [string]$Name = 'BitGG-DriverTest',
     [string]$VMDir = 'D:\VMs',
     [int]$MemoryMB = 4096,
-    [int]$Cpus = 4,
+    [int]$Cpus = 2,           # more vCPUs lag badly when VirtualBox runs on Hyper-V (NEM)
     [int]$DiskGB = 64,
     [int]$ImageIndex = 0      # 0 = pick "Windows 11 Pro" from the ISO
 )
@@ -42,10 +42,12 @@ $login = Join-Path $VMDir "$Name-login.txt"
 
 VB createvm --name $Name --ostype Windows11_64 --basefolder $VMDir --register
 VB modifyvm $Name --firmware efi --tpm-type 2.0 --memory $MemoryMB --cpus $Cpus `
-    --graphicscontroller vboxsvga --vram 128 --nic1 nat --audio-enabled off --clipboard-mode bidirectional
+    --graphicscontroller vboxsvga --vram 128 --nic1 nat --audio-enabled off --clipboard-mode bidirectional `
+    --paravirt-provider hyperv
 $disk = Join-Path $VMDir "$Name\$Name.vdi"
 VB createmedium disk --filename $disk --size ($DiskGB * 1024) --format VDI
-VB storagectl $Name --name SATA --add sata --controller IntelAhci --portcount 2
+# Host I/O cache: without it the guest's disk timed out (AHCI port reset) during Setup on a Hyper-V host.
+VB storagectl $Name --name SATA --add sata --controller IntelAhci --portcount 2 --hostiocache on
 VB storageattach $Name --storagectl SATA --port 0 --device 0 --type hdd --medium $disk
 VB sharedfolder add $Name --name bitggvad-test --hostpath (Resolve-Path $Package).Path --automount --auto-mount-point 'B:'
 
@@ -54,4 +56,4 @@ VB unattended install $Name --iso="$Iso" --image-index=$ImageIndex --user=$user 
 
 Write-Host "VM '$Name' is installing Windows (takes 20-40 min, it reboots by itself)."
 Write-Host "Login saved to $login. The test package appears in the VM as drive B:."
-Write-Host "When Windows is ready: snapshot it, then follow docs/driver/TESTPLAN.md."
+Write-Host "When Windows is ready: shut it down, remove the ISOs, snapshot it (powered off), then follow docs/driver/TESTPLAN.md."

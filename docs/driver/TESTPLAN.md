@@ -40,7 +40,14 @@ driver\test\New-TestVM.ps1 -Iso D:\ISO\Win11_x64.iso
 - **Login:** user `tester`. The generated password is in `D:\VMs\BitGG-DriverTest-login.txt`.
 - **Test package:** appears in the VM as drive **B:** (shared folder). Logs are written back to `B:\results`.
 
-When Windows reaches the desktop, take a snapshot: `VBoxManage snapshot BitGG-DriverTest take clean-install`.
+When Windows reaches the desktop, shut it down from inside, remove the install ISOs, and take a snapshot **while the VM is powered off**:
+
+```powershell
+VBoxManage storageattach BitGG-DriverTest --storagectl SATA --port 1 --device 0 --medium emptydrive   # repeat for each DVD port VBoxManage showvminfo lists
+VBoxManage snapshot BitGG-DriverTest take clean-install
+```
+
+> **Never take a live snapshot (VM running) on this host.** With Memory Integrity on, VirtualBox runs on top of Hyper-V ("NEM"). A live snapshot failed with `VERR_VM_UNEXPECTED_UNSTABLE_STATE` and left the VM frozen. Only an elevated `taskkill /F /IM VirtualBoxVM.exe` could stop it. If the install ISOs are still attached, the VM then boots Windows Setup again.
 
 ## 3. Prepare the guest (VM, elevated PowerShell)
 
@@ -49,7 +56,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 B:\test\Prepare-Guest.ps1     # test signing on + kernel dumps, reboots
 ```
 
-After the reboot ("Test Mode" shows on the desktop), take a snapshot `testsigning`. This is the restore point after every crash.
+After the reboot ("Test Mode" shows on the desktop), shut down and take the snapshot `testsigning` (powered off). This is the restore point after every crash.
 
 ## 4. Test cases
 
