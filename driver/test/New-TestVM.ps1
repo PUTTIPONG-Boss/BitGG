@@ -9,7 +9,7 @@ param(
     [string]$Name = 'BitGG-DriverTest',
     [string]$VMDir = 'D:\VMs',
     [int]$MemoryMB = 4096,
-    [int]$Cpus = 2,           # more vCPUs lag badly when VirtualBox runs on Hyper-V (NEM)
+    [int]$Cpus = 4,           # with 2 the EFI firmware hung at DXE_AP on a Hyper-V (NEM) host
     [int]$DiskGB = 64,
     [int]$ImageIndex = 0      # 0 = pick "Windows 11 Pro" from the ISO
 )
@@ -42,8 +42,7 @@ $login = Join-Path $VMDir "$Name-login.txt"
 
 VB createvm --name $Name --ostype Windows11_64 --basefolder $VMDir --register
 VB modifyvm $Name --firmware efi --tpm-type 2.0 --memory $MemoryMB --cpus $Cpus `
-    --graphicscontroller vboxsvga --vram 128 --nic1 nat --audio-enabled off --clipboard-mode bidirectional `
-    --paravirt-provider hyperv
+    --graphicscontroller vboxsvga --vram 128 --nic1 nat --audio-enabled off --clipboard-mode bidirectional
 $disk = Join-Path $VMDir "$Name\$Name.vdi"
 VB createmedium disk --filename $disk --size ($DiskGB * 1024) --format VDI
 # Host I/O cache: without it the guest's disk timed out (AHCI port reset) during Setup on a Hyper-V host.
