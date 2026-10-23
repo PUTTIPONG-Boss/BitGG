@@ -1,0 +1,12 @@
+# Rust build output
+/target/
+
+# local-only: hardcoded target-dir path for this machine (long-path workaround)
+/.cargo/config.toml
+
+# editor / OS
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+desktop.ini

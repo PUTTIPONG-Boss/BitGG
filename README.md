@@ -1,0 +1,100 @@
+# BitGG
+
+**A tiny, native Windows replacement for the two parts of SteelSeries GG that people actually use every day: Sonar (audio mixer / per-app routing / EQ / mic) and Moments (replay buffer + screen recording).** 8-bit pixel-art UI, drawn by hand with no GPU, no Electron, no .NET.
+
+🇹🇭 ภาษาไทย: [README.th.md](README.th.md)
+
+| | RAM | CPU (idle) |
+|---|---|---|
+| BitGG window open | ~26 MB | ~0 % |
+| BitGG + 30 s replay buffer @ 1080p60 | ~26 MB + the clip buffer (~60 MB) | <1 % |
+| SteelSeries GG (for comparison, same PC) | ~740 MB | — |
+
+The whole app is a single ~1 MB `.exe` with no dependencies.
+
+> **Unofficial / independent project.** Not affiliated with SteelSeries. It reuses the Sonar *virtual audio devices* that GG already installed on your PC; it does not ship or modify any SteelSeries driver.
+
+---
+
+## Install (easy)
+
+BitGG is **portable** — there is nothing to install and it never needs admin rights.
+
+1. Download **`BitGG.exe`** — from the [Releases](../../releases) page, or directly from [`dist/BitGG.exe`](dist/BitGG.exe) in this repo.
+2. Double-click it. The window opens and it works right away.
+3. (Optional) Go to the **SETUP** tab and click **ADD SHORTCUTS** for Desktop + Start Menu icons, or turn on **STARTUP** to launch it (in the tray) when you log in.
+
+Settings are saved to `%APPDATA%\BitGG\config.json`. Clips go to `Videos\BitGG` by default (changeable in the CLIPS tab).
+
+### "Windows protected your PC" / antivirus warning
+
+BitGG is open source and clean — but it is a brand-new, **unsigned** native app that captures the screen, so Windows SmartScreen or some antivirus engines may show a first-run warning until the file builds reputation. This is a false positive. You can:
+
+- Click **More info → Run anyway** on the SmartScreen dialog, **or**
+- **Build it yourself** from source (below) so you are running exactly the code you can read, **or**
+- Verify the download against the SHA-256 published on the Releases page.
+
+BitGG does not obfuscate or pack its binary, does not phone home, and the one feature that looks like a keylogger — a global keyboard hook — is **off by default**. See [Is it safe?](#is-it-safe) below.
+
+---
+
+## What it does
+
+### Sound (the Sonar part)
+- **5 strips** — Game / Chat / Media / Aux / Mic — plus a Master, each with a fader, mute, and live meters.
+- **Per-app routing (APPS tab):** send each program to a channel (e.g. game → GAME, Discord → CHAT) using the same hidden Windows API Sonar uses.
+- **10-band parametric EQ (EQ tab):** drag points on the response graph, scroll to change Q, presets (Flat / Bass / FPS / Voice / Music). Works on each channel and the mic.
+- **ChatMix:** one slider to balance game vs. chat.
+- **Mic:** noise gate + EQ.
+- **Two modes, automatic:**
+  - **DSP** (green dot) — when a channel points at a *virtual audio device* (Sonar's VADs or e.g. VB-Cable), audio is routed through it and fully processed (EQ, gate, mix).
+  - **DIRECT** (purple dot) — when there is no virtual device, the fader simply scales the real volume of the apps you assigned. No EQ, but it always works with zero setup.
+- **Use Sonar's virtual devices without running GG:** the SETUP button **ENABLE SONAR VADS** turns Sonar's (disabled) virtual devices back on with no admin — so you get full EQ/routing without GG's 700 MB running.
+
+### Clips (the Moments part)
+- **Replay buffer:** always encoding the last *N* seconds (15–300 s) to a RAM ring using your GPU (NVENC / Quick Sync / AMF) via Windows Media Foundation — **no FFmpeg needed**.
+- **Save the last N seconds instantly:** press the hotkey (default auto-picked, e.g. **Ctrl+Alt+S**) *while in-game* — the window can be in the tray. Saving is a stream copy (no re-encode), ~0.1 s, with a confirmation sound.
+- **Record mode:** a normal start/stop recording to MP4.
+- **Pick what to record:** output device + volume, and microphone + volume, each with a live level bar and a soft limiter.
+- Change the save folder, the key, resolution, fps, bitrate, encoder, and monitor in the CLIPS tab.
+
+### Lives in the tray
+Minimize or press **X** → BitGG tucks into the system tray and keeps running (engine + replay stay on). Left-click the tray icon to reopen, right-click for a menu (Open / Save clip / Replay on-off / Exit). Launching it again just reopens the existing window.
+
+---
+
+## Build from source
+
+Requires the [Rust toolchain](https://rustup.rs) (stable). Either MSVC or GNU works.
+
+```sh
+git clone https://github.com/PUTTIPONG-Boss/BitGG.git
+cd BitGG
+cargo build --release
+```
+
+The binary is at `target/release/bitgg.exe`.
+
+- The app icon is embedded via `build.rs` using **windres** (part of the MinGW toolchain). If windres isn't present (e.g. a pure MSVC setup), the build still succeeds — just without the embedded icon.
+- If your checkout path is very long (Windows `MAX_PATH`), point the build output somewhere short: create `.cargo/config.toml` with `[build]` and `target-dir = "C:/bitgg-target"`.
+
+---
+
+## Is it safe?
+
+Yes, and it's designed to be auditable:
+
+- **Open source, no obfuscation, no packer.** What you read is what runs.
+- **No network.** BitGG makes no outbound connections.
+- **No admin required.** Everything runs as your normal user.
+- **Portable.** It doesn't copy itself around or edit the registry. "ADD SHORTCUTS"/"STARTUP" only create `.lnk` files that point at the exe you ran, and only when you choose.
+- **The keyboard hook is opt-in.** A global low-level keyboard hook is the one thing that both antivirus heuristics and users are right to be wary of. BitGG registers normal global hotkeys instead, and if your chosen key is taken it automatically moves to a free one. The hook (`SETUP → KEY HOOK`) is **off by default** and only there for the rare case where every candidate key is occupied.
+- **Why it still might get flagged:** an unsigned executable that uses the Desktop Duplication / Media Foundation capture APIs looks, to a dumb heuristic, a bit like screen-capture malware. The real fixes are a code-signing certificate and download reputation, both of which take time/money for a hobby project. Building from source sidesteps it entirely.
+
+If your antivirus quarantines it and you want to help, submit it as a false positive to your vendor — that improves detection for everyone.
+
+---
+
+## License
+
+[MIT](LICENSE). SteelSeries, Sonar, GG and Moments are trademarks of their respective owners; BitGG is an independent interoperability project.
