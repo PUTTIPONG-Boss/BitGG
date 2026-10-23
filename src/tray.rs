@@ -71,6 +71,24 @@ unsafe fn add_icon(hwnd: HWND) {
     let _ = Shell_NotifyIconW(NIM_ADD, &n);
 }
 
+/// Show a Windows notification from the tray icon.
+pub fn notify(title: &str, text: &str) {
+    let raw = HWND_RAW.load(Ordering::Acquire);
+    if raw == 0 {
+        return;
+    }
+    let mut n = nid(HWND(raw as *mut _));
+    n.uFlags = NIF_INFO;
+    let t: Vec<u16> = title.encode_utf16().take(63).collect();
+    n.szInfoTitle[..t.len()].copy_from_slice(&t);
+    let b: Vec<u16> = text.encode_utf16().take(255).collect();
+    n.szInfo[..b.len()].copy_from_slice(&b);
+    n.dwInfoFlags = NIIF_INFO;
+    unsafe {
+        let _ = Shell_NotifyIconW(NIM_MODIFY, &n);
+    }
+}
+
 /// Remove the icon (otherwise a ghost icon stays until hovered).
 pub fn remove() {
     let raw = HWND_RAW.load(Ordering::Acquire);

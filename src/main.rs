@@ -11,6 +11,7 @@ mod mf;
 mod recorder;
 mod tgui;
 mod tray;
+mod update;
 mod picker;
 mod shortcuts;
 mod hotkey;
@@ -138,6 +139,10 @@ struct App {
     rec_levels: Arc<recorder::RecLevels>,
     /// Sonar APO bypass: original "enhancements enabled" per VAD id we changed
     fx_saved: HashMap<String, bool>,
+    update: Arc<Mutex<update::State>>,
+    last_update_check: Option<Instant>,
+    update_notified: bool,
+    update_requested: bool,
 }
 
 impl App {
@@ -176,6 +181,10 @@ impl App {
             picked_folder: Arc::new(Mutex::new(None)),
             rec_levels: Arc::new(recorder::RecLevels::default()),
             fx_saved: HashMap::new(),
+            update: Arc::new(Mutex::new(update::State::Idle)),
+            last_update_check: None,
+            update_notified: false,
+            update_requested: false,
             cfg,
         };
         // GG leaves its VADs disabled when it quits; bring them back if the user opted in
@@ -702,6 +711,7 @@ impl App {
         if self.slow_refresh.elapsed() > Duration::from_secs(8) {
             self.slow_refresh = Instant::now();
             self.refresh();
+            self.maybe_check_update();
         }
         let _ = ticks;
         self.ui.begin();
@@ -740,6 +750,8 @@ impl App {
         const VERSION: &str = concat!("v", env!("CARGO_PKG_VERSION"));
         ui.text_tiny(48, 7, VERSION, BLACK); // shadow
         ui.text_tiny(47, 6, VERSION, LGREY);
+        self.update_badge();
+        let ui = &mut self.ui;
         let rec_on = self.rec.as_ref().map(|r| r.alive()).unwrap_or(false);
         if rec_on {
             let blink = (ui.frame / 10) % 2 == 0;
@@ -1425,8 +1437,27 @@ impl App {
         // ---- help text
         let hk = format!("HOTKEYS {} SAVE  ALT+F9 REC  ALT+F8 REPLAY", hotkey::ACTIVE_SAVE.lock().unwrap());
         self.ui.text(6, 198, &hk, DGREY);
-        self.ui.text(6, 210, "NO VIRTUAL DEVICE = DIRECT MODE (VOLUME).", DGREY);
-        self.ui.text(6, 220, "DSP/EQ NEEDS GG SONAR VADS OR VB-CABLE.", DGREY);
+        self.ui.text(6, 208, "NO VIRTUAL DEVICE = DIRECT MODE (VOLUME).", DGREY);
+        // updates: the only network use in BitGG (GitHub release check)
+        let mut on = !self.cfg.update_check_off;
+        if self.ui.toggle(r(6, 218, 120, 11), if on { "UPDATES: AUTO" } else { "UPDATES: OFF" }, &mut on, GREEN) {
+            self.cfg.update_check_off = !on;
+            if on {
+                self.last_update_check = None;
+                self.maybe_check_update();
+            }
+            changed = true;
+        }
+        self.ui.tip(r(6, 218, 120, 11), "CHECKS GITHUB FOR A NEW RELEASE (6H)");
+        let st = match self.update.lock().unwrap().clone() {
+            update::State::Idle => String::new(),
+            update::State::Checking => "CHECKING...".into(),
+            update::State::UpToDate => format!("UP TO DATE (V{})", update::current()),
+            update::State::Downloading(v) => format!("DOWNLOADING {}", v.to_uppercase()),
+            update::State::Ready { version, .. } => format!("{} READY: CLICK UPDATE", version.to_uppercase()),
+            update::State::Error(e) => format!("UPDATE: {}", e.to_uppercase()),
+        };
+        self.ui.text_fit(132, 220, &st, 32, if st.contains("READY") { GREEN } else { DGREY });
         if self.sonar_running {
             self.ui.text_s(6, 231, "GG SONAR RUNNING: QUIT GG FIRST", ORANGE);
         }
@@ -1455,6 +1486,12 @@ impl App {
     }
 
     fn quit(&mut self, el: &ActiveEventLoop) {
+        self.shutdown();
+        el.exit();
+    }
+
+    /// Leave the PC exactly as we found it (also used before an update restart).
+    fn shutdown(&mut self) {
         tray::remove();
         self.apply_direct(false, true); // leave every app as we found it
         if let Some(mut e) = self.engine.take() {
@@ -1465,7 +1502,81 @@ impl App {
         self.cfg.save();
         self.rec = None;
         self.engine = None;
-        el.exit();
+    }
+
+    // ---------------------------------------------------------- updates
+
+    fn maybe_check_update(&mut self) {
+        if self.cfg.update_check_off {
+            return;
+        }
+        let due = match self.last_update_check {
+            None => true,
+            Some(t) => t.elapsed() > Duration::from_secs(6 * 3600),
+        };
+        if due {
+            self.last_update_check = Some(Instant::now());
+            update::spawn_check(self.update.clone());
+        }
+    }
+
+    /// Header: "UPDATE vX.Y.Z" button once a verified download is ready.
+    fn update_badge(&mut self) {
+        let st = self.update.lock().unwrap().clone();
+        match st {
+            update::State::Downloading(v) => {
+                self.ui.text_tiny(78, 6, &v, DGREY);
+            }
+            update::State::Ready { version, .. } => {
+                if !self.update_notified {
+                    self.update_notified = true;
+                    tray::notify("BitGG update ready", &format!("{version} is downloaded and verified. Open BitGG and click UPDATE to restart into it."));
+                }
+                let label = format!("UPDATE {}", version.to_uppercase());
+                let w = label.len() as i32 * 8 + 8;
+                let q = r(78, 1, w, 12);
+                // solid pill so it can't be missed: green/yellow blink, white on hover
+                let blink = (self.ui.frame / 8) % 2 == 0;
+                let hov = q.has(self.ui.inp.mx, self.ui.inp.my);
+                let bg = if hov { WHITE } else if blink { GREEN } else { YELLOW };
+                self.ui.boxed(q, bg, BLACK);
+                self.ui.text_c(q, &label, BLACK);
+                if self.ui.clicked_in(q) {
+                    self.update_requested = true;
+                }
+                // test hook: press the button as soon as it appears (after one shown frame)
+                if std::env::var_os("BITGG_AUTO_APPLY").is_some() && self.ui.frame > 30 {
+                    self.update_requested = true;
+                }
+                self.ui.tip(q, "RESTART TO UPDATE (SETTINGS ARE KEPT)");
+            }
+            _ => {}
+        }
+    }
+
+    /// Swap in the verified exe, clean up, restart into it.
+    fn apply_update(&mut self, el: &ActiveEventLoop) {
+        let st = self.update.lock().unwrap().clone();
+        let update::State::Ready { version, path } = st else { return };
+        let exe = match update::swap_in(&path) {
+            Ok(exe) => exe,
+            Err(e) => {
+                *self.update.lock().unwrap() = update::State::Error(e);
+                return;
+            }
+        };
+        self.shutdown(); // restore audio routing, devices, save config
+        release_single_instance(); // let the new build start as the only instance
+        match std::process::Command::new(&exe).spawn() {
+            Ok(_) => el.exit(),
+            Err(e) => {
+                // keep running the old build rather than leave nothing running
+                update::swap_back();
+                let _ = std::process::Command::new(&exe).spawn();
+                *self.update.lock().unwrap() = update::State::Error(format!("start {version}: {e}"));
+                el.exit();
+            }
+        }
     }
 
     fn present(&mut self, force: bool) {
@@ -1583,6 +1694,9 @@ impl ApplicationHandler<UserEv> for App {
                 self.draw();
                 let force = std::mem::take(&mut self.force_present);
                 self.present(force);
+                if std::mem::take(&mut self.update_requested) {
+                    self.apply_update(_el);
+                }
             }
             WindowEvent::Resized(_) => {
                 if self.window.as_ref().and_then(|w| w.is_minimized()).unwrap_or(false) {
@@ -2319,6 +2433,32 @@ fn diag() {
     }
 }
 
+static SINGLE_INSTANCE: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
+
+fn release_single_instance() {
+    let raw = SINGLE_INSTANCE.swap(0, std::sync::atomic::Ordering::AcqRel);
+    if raw != 0 {
+        unsafe {
+            let h = windows::Win32::Foundation::HANDLE(raw as *mut _);
+            let _ = windows::Win32::System::Threading::ReleaseMutex(h);
+            let _ = windows::Win32::Foundation::CloseHandle(h);
+        }
+    }
+}
+
+/// Test: check GitHub, download + verify, and (with --apply) swap the exe.
+fn update_test(apply: bool) {
+    println!("this build: v{}  (repo {})", update::current(), update::REPO);
+    let st = update::check_and_fetch();
+    println!("result: {st:?}");
+    if let (true, update::State::Ready { path, .. }) = (apply, &st) {
+        match update::swap_in(path) {
+            Ok(exe) => println!("swapped in: {}", exe.display()),
+            Err(e) => println!("swap failed: {e}"),
+        }
+    }
+}
+
 fn main() {
     win_audio::com_init();
     let args: Vec<String> = std::env::args().collect();
@@ -2348,6 +2488,10 @@ fn main() {
     }
     if args.get(1).map(|s| s == "--staletest").unwrap_or(false) {
         staletest();
+        return;
+    }
+    if args.get(1).map(|s| s == "--update-test").unwrap_or(false) {
+        update_test(args.get(2).map(|s| s == "--apply").unwrap_or(false));
         return;
     }
     if args.get(1).map(|s| s == "--diag").unwrap_or(false) {
@@ -2514,8 +2658,11 @@ fn main() {
             tray::signal_existing();
             return;
         }
-        std::mem::forget(m);
+        if let Ok(h) = m {
+            SINGLE_INSTANCE.store(h.0 as isize, std::sync::atomic::Ordering::Release);
+        }
     }
+    update::cleanup(); // remove BitGG.exe.old / .new left by a previous update
     let start_hidden = args.iter().any(|a| a == "--tray");
     let cfg = Config::load();
     let el = EventLoop::<UserEv>::with_user_event().build().expect("event loop");

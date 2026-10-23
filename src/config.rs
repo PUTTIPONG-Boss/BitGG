@@ -172,6 +172,9 @@ pub struct Config {
     pub clips: Clips,
     #[serde(default)]
     pub scale: u32,
+    /// true = never contact GitHub for updates (default: check)
+    #[serde(default)]
+    pub update_check_off: bool,
 }
 
 pub fn dir() -> PathBuf {

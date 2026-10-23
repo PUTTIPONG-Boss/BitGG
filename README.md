@@ -34,6 +34,12 @@ BitGG is **portable** — there is nothing to install and it never needs admin r
 
 Settings are saved to `%APPDATA%\BitGG\config.json`. Clips go to `Videos\BitGG` by default (changeable in the CLIPS tab).
 
+### Updating
+
+BitGG updates itself. When a new release is out, it downloads it in the background, checks it against the release's SHA-256, and shows a blinking **UPDATE vX.Y.Z** button next to the logo (plus a tray notification). Click it: BitGG puts your audio back to normal, swaps the exe, and restarts into the new version. Your settings are kept.
+
+The check is one request to GitHub's release API at startup and every 6 hours. Nothing about you or your PC is sent. Turn it off in **SETUP → UPDATES**. If it's off, or you're on v0.1.0 (before the updater existed), just download the new `BitGG.exe` and replace the old one.
+
 ### "Windows protected your PC" / antivirus warning
 
 BitGG is open source and clean — but it is a brand-new, **unsigned** native app that captures the screen, so Windows SmartScreen or some antivirus engines may show a first-run warning until the file builds reputation. This is a false positive. You can:
@@ -42,7 +48,7 @@ BitGG is open source and clean — but it is a brand-new, **unsigned** native ap
 - **Build it yourself** from source (below) so you are running exactly the code you can read, **or**
 - Verify the download: every release lists its SHA-256, and is built by GitHub Actions with a signed provenance attestation. With the [GitHub CLI](https://cli.github.com): `gh attestation verify BitGG.exe -R PUTTIPONG-Boss/BitGG`.
 
-BitGG does not obfuscate or pack its binary, does not phone home, and the one feature that looks like a keylogger — a global keyboard hook — is **off by default**. See [Is it safe?](#is-it-safe) below.
+BitGG does not obfuscate or pack its binary, sends no data about you (its only network use is the optional update check), and the one feature that looks like a keylogger — a global keyboard hook — is **off by default**. See [Is it safe?](#is-it-safe) below.
 
 ---
 
@@ -146,7 +152,7 @@ Where to get a certificate: a code-signing certificate from a public CA (OV/EV, 
 Yes, and it's designed to be auditable:
 
 - **Open source, no obfuscation, no packer.** What you read is what runs.
-- **No network.** BitGG makes no outbound connections.
+- **Network: only the update check.** One HTTPS request to GitHub's release API (and the download when there's a new version). No analytics, no data about you. Can be turned off in SETUP → UPDATES.
 - **No admin required.** Everything runs as your normal user.
 - **Portable.** It doesn't copy itself around or edit the registry. "ADD SHORTCUTS"/"STARTUP" only create `.lnk` files that point at the exe you ran, and only when you choose.
 - **The keyboard hook is opt-in.** A global low-level keyboard hook is the one thing that both antivirus heuristics and users are right to be wary of. BitGG registers normal global hotkeys instead, and if your chosen key is taken it automatically moves to a free one. The hook (`SETUP → KEY HOOK`) is **off by default** and only there for the rare case where every candidate key is occupied.
