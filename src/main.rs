@@ -1705,9 +1705,48 @@ fn vadtest() {
     }
 }
 
+/// README screenshots: renders tabs with a demo config, so no personal paths,
+/// device or program names end up in the docs. CLIPS shows a real running
+/// replay buffer (5 s, kept in RAM only, never saved).
+fn screenshots(out: &std::path::Path) {
+    const DEMO_DIR: &str = r"C:\Users\you\Videos\BitGG";
+    let _ = std::fs::create_dir_all(out);
+    let mut cfg = Config::default();
+    cfg.clips.folder = DEMO_DIR.into();
+    cfg.clips.save_key = "CTRL+ALT+S".into();
+    cfg.clips.replay_secs = 60;
+    cfg.clips.rec_audio_gain = 0.75;
+    cfg.audio.ch[0].eq = dsp::preset("FPS");
+    let mut app = App::new(cfg);
+    *hotkey::ACTIVE_SAVE.lock().unwrap() = "CTRL+ALT+S".into();
+    *hotkey::STATUS.lock().unwrap() = "CTRL+ALT+S OK".into();
+    let demo_clips = ["clip_2026-10-23_21-14-05.mp4", "clip_2026-10-23_20-52-41.mp4"];
+    let shoot = |app: &mut App, tab: Tab, name: &str| {
+        app.tab = tab;
+        app.clips = demo_clips.iter().map(|c| std::path::PathBuf::from(DEMO_DIR).join(c)).collect();
+        app.slow_refresh = Instant::now();
+        app.ui.inp.mx = -10;
+        app.draw();
+        write_bmp(&out.join(format!("{name}.bmp")), &app.ui.px, W, H, 2);
+    };
+    shoot(&mut app, Tab::Mixer, "mixer");
+    app.eq_ch = 0;
+    app.eq_band = 7;
+    shoot(&mut app, Tab::Eq, "eq");
+    app.start_replay();
+    std::thread::sleep(Duration::from_secs(5));
+    shoot(&mut app, Tab::Clips, "clips");
+    app.rec = None;
+    println!("screenshots written to {}", out.display());
+}
+
 fn main() {
     win_audio::com_init();
     let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(|s| s == "--screenshots").unwrap_or(false) {
+        screenshots(std::path::Path::new(args.get(2).map(|s| s.as_str()).unwrap_or("screenshots")));
+        return;
+    }
     if args.get(1).map(|s| s == "--vads").unwrap_or(false) {
         // `--vads` lists; `--vads on|off` enables/disables like the SETUP button
         match args.get(2).map(|s| s.as_str()) {

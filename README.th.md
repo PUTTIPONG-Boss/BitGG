@@ -4,6 +4,14 @@
 
 🇬🇧 English: [README.md](README.md)
 
+<p align="center">
+  <img src="docs/screenshots/clips.png" alt="หน้า CLIPS ของ BitGG: replay buffer, ปุ่ม save, ระดับเสียงที่อัดและไมค์" width="800">
+</p>
+
+| Mixer | Parametric EQ |
+|---|---|
+| <img src="docs/screenshots/mixer.png" alt="หน้า Mixer ของ BitGG: fader ของ Game, Chat, Media, Aux, Mic และ Master พร้อมมิเตอร์และ ChatMix" width="400"> | <img src="docs/screenshots/eq.png" alt="EQ 10 band ของ BitGG ใช้ preset FPS" width="400"> |
+
 | | RAM | CPU (ว่าง) |
 |---|---|---|
 | เปิดหน้าต่าง BitGG | ~26 MB | ~0 % |
@@ -103,6 +111,8 @@ git push origin v0.2.0
 ```
 
 GitHub Actions จะ build, รันเทสต์ (รวมเทสต์กัน anti-cheat), เซ็นชื่อ (ถ้าตั้งค่าไว้) และออก release พร้อม `BitGG.exe`, `SHA256SUMS.txt` และ provenance attestation ให้เอง นอกจากนี้ CI จะ build และรันเทสต์ให้ทุก push และทุก PR
+
+ถ้าแก้หน้าตา UI แล้วอยากอัปเดตรูปใน README ให้รัน `bitgg --screenshots <โฟลเดอร์>` โปรแกรมจะวาดหน้า CLIPS, MIXER และ EQ ด้วยการตั้งค่าตัวอย่าง (ไม่มี path หรือชื่ออุปกรณ์ส่วนตัว) ออกมาเป็น BMP แล้วแปลงเป็น PNG ใส่ใน `docs/screenshots/`
 
 ### Code signing (ไม่บังคับ)
 
