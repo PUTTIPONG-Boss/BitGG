@@ -1,7 +1,14 @@
 name: Release
 
-# Push a version tag to publish a release:
+# Releases come only from main. After merging master -> main:
+#   git switch main && git pull
 #   git tag v0.2.0 && git push origin v0.2.0
+#
+# Code signing (optional): add repository secrets
+#   WINDOWS_CERT_PFX_BASE64  base64 of your code-signing .pfx
+#   WINDOWS_CERT_PASSWORD    its password
+# (and optionally the variable TIMESTAMP_URL). Without them the release is
+# published unsigned, exactly as before.
 on:
   push:
     tags: ["v*"]
@@ -17,8 +24,20 @@ jobs:
     defaults:
       run:
         shell: bash
+    env:
+      HAS_CERT: ${{ secrets.WINDOWS_CERT_PFX_BASE64 != '' }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history, to check the tag is on main
+
+      - name: Tag must be on main
+        run: |
+          git fetch origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::$GITHUB_REF_NAME is not on main. Release from main only (merge master -> main first)."
+            exit 1
+          fi
 
       - name: Install Rust (stable)
         run: rustup toolchain install stable --profile minimal && rustup default stable
@@ -34,7 +53,23 @@ jobs:
         run: |
           mkdir out
           cp target/release/bitgg.exe out/BitGG.exe
-          cd out && sha256sum BitGG.exe > SHA256SUMS.txt && cat SHA256SUMS.txt
+
+      # Authenticode signing; skipped when the certificate secrets are not set
+      - name: Code-sign
+        id: sign
+        if: env.HAS_CERT == 'true'
+        shell: pwsh
+        env:
+          CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+          TIMESTAMP_URL: ${{ vars.TIMESTAMP_URL }}
+        run: |
+          ./.github/scripts/sign.ps1 -File out/BitGG.exe
+          "signer=$((Get-AuthenticodeSignature out/BitGG.exe).SignerCertificate.GetNameInfo('SimpleName', $false))" >> $env:GITHUB_OUTPUT
+
+      # checksum + provenance are taken of the final (signed) file
+      - name: Checksum
+        run: cd out && sha256sum BitGG.exe > SHA256SUMS.txt && cat SHA256SUMS.txt
 
       # Lets anyone verify the exe was built by this workflow from this repo:
       #   gh attestation verify BitGG.exe -R ${{ github.repository }}
@@ -47,8 +82,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
+          SIGNER: ${{ steps.sign.outputs.signer }}
         run: |
           SHA=$(cut -d' ' -f1 out/SHA256SUMS.txt)
+          if [ -n "$SIGNER" ]; then
+            SIGN_NOTE="**Code-signed** by *${SIGNER}* (Authenticode, SHA-256, timestamped). Right-click the exe → Properties → Digital Signatures to check."
+          else
+            SIGN_NOTE="**SmartScreen warning?** This build is not code-signed, so Windows may show \"Windows protected your PC\". Click *More info → Run anyway*, or build from source. See the README (EN/TH)."
+          fi
           cat > notes.md <<EOF
           ## Download
           **[BitGG.exe](https://github.com/${{ github.repository }}/releases/download/${TAG}/BitGG.exe)**: portable, no install, no admin. Double-click to run.
@@ -60,8 +101,7 @@ jobs:
           gh attestation verify BitGG.exe -R ${{ github.repository }}
           \`\`\`
 
-          **SmartScreen warning?** The exe is not code-signed yet, so Windows may show "Windows protected your PC" until it builds reputation. Click *More info → Run anyway*, or build from source. See the README (EN/TH).
+          ${SIGN_NOTE}
 
           EOF
-          gh release create "$TAG" out/BitGG.exe out/SHA256SUMS.txt \
-            --title "BitGG $TAG" --notes-file notes.md --generate-notes
+          gh release create "$TAG" out/BitGG.exe out/SHA256SUMS.txt             --title "BitGG $TAG" --notes-file notes.md --generate-notes
