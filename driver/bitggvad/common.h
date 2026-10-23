@@ -165,6 +165,13 @@ typedef enum
     eUsbHsSpeakerDevice,
     eUsbHsMicDevice,
     eA2dpHpSpeakerDevice,
+    // BitGG endpoints
+    eBitggGameDevice,
+    eBitggChatDevice,
+    eBitggMediaDevice,
+    eBitggAuxDevice,
+    eBitggMicInDevice,      // render side of the mic loopback
+    eBitggMicDevice,        // capture side of the mic loopback
     eMaxDeviceType
     
 } eDeviceType;

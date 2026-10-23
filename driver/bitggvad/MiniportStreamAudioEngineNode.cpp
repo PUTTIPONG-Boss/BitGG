@@ -944,9 +944,9 @@ NTSTATUS CMiniportWaveRTStream::SetLoopbackProtection(_In_ CONSTRICTOR_OPTION pr
     DPF_ENTER(("[CMiniportWaveRTStream::SetLoopbackProtection]"));
 
     //
-    // Miniport driver mutes/unmutes the loopback here.
-    // 
-    m_ToneGenerator.SetMute(protectionOption == CONSTRICTOR_OPTION_MUTE);
+    // BitGG: no hardware loopback pin, so there is nothing to mute here.
+    //
+    UNREFERENCED_PARAMETER(protectionOption);
     
     return STATUS_SUCCESS;
 }

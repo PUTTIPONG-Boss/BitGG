@@ -17,7 +17,6 @@ Abstract:
 #include <initguid.h>
 #include <sysvad.h>
 #include "hw.h"
-#include "savedata.h"
 #include "IHVPrivatePropertySet.h"
 #include "simple.h"
 
@@ -46,11 +45,6 @@ Abstract:
 #include "A2dpHpDevice.h"
 #endif // SYSVAD_A2DP_SIDEBAND
 
-//-----------------------------------------------------------------------------
-// CSaveData statics
-//-----------------------------------------------------------------------------
-
-PDEVICE_OBJECT          CSaveData::m_pDeviceObject = NULL;
 //=============================================================================
 // Classes
 //=============================================================================
@@ -833,11 +827,6 @@ Return Value:
     IF_FAILED_JUMP(ntStatus, Done);
     
     m_pHW->MixerReset();
-
-    //
-    // Initialize SaveData class.
-    //
-    CSaveData::SetDeviceObject(DeviceObject);   //device object is needed by CSaveData
 Done:
 
     return ntStatus;

@@ -15,8 +15,6 @@ Abstract:
 #ifndef _SYSVAD_MINWAVERTSTREAM_H_
 #define _SYSVAD_MINWAVERTSTREAM_H_
 
-#include "savedata.h"
-#include "tonegenerator.h"
 
 
 //
@@ -119,26 +117,13 @@ protected:
     PLONG                       m_plPeakMeter;
     PWAVEFORMATEXTENSIBLE       m_pWfExt;
     ULONG                       m_ulContentId;
-    CSaveData                   m_SaveData;
-    ToneGenerator               m_ToneGenerator;
+    ULONGLONG                   m_ullLoopReadPos;   // BitGG: Mic capture read position in the loopback ring
     GUID                        m_SignalProcessingMode;
     BOOLEAN                     m_bEoSReceived;
     BOOLEAN                     m_bLastBufferRendered;
     KSPIN_LOCK                  m_PositionSpinLock;
     AUDIOMODULE *               m_pAudioModules;
     ULONG                       m_AudioModuleCount;
-    // Member variable as config params for tone generator
-    ULONG                       m_ulHostCaptureToneFrequency;
-    ULONG                       m_ulLoopbackCaptureToneFrequency;
-    // If abs(m_dwHostCaptureToneAmplitude) + abs(m_dwHostCaptureToneDCValue) > 100
-    // m_dwHostCaptureToneDCValue will be compensated to make the sum equal to 100
-    DWORD                       m_dwHostCaptureToneAmplitude;   // must be between -100 to 100
-    DWORD                       m_dwLoopbackCaptureToneAmplitude; // must be between -100 to 100
-    DWORD                       m_dwHostCaptureToneDCOffset;   // must be between -100 to 100
-    DWORD                       m_dwLoopbackCaptureToneDCOffset; // must be between -100 to 100
-    DWORD                       m_dwHostCaptureToneInitialPhase;   // must be between -31416 to 31416
-    DWORD                       m_dwLoopbackCaptureToneInitialPhase; // must be between -31416 to 31416
-    // Member variable as config params for tone generator
 
 #if defined(SYSVAD_BTH_BYPASS) || defined(SYSVAD_USB_SIDEBAND)
     BOOL                        m_SidebandOpen;
@@ -307,7 +292,6 @@ private:
         _Out_opt_  ULONGLONG *      _pullPresentationPosition, 
         _Out_opt_  LARGE_INTEGER *  _pliQPCTime
     );
-    NTSTATUS ReadRegistrySettings();
 
 #if defined(SYSVAD_BTH_BYPASS) || defined(SYSVAD_USB_SIDEBAND)
     NTSTATUS GetSidebandStreamNtStatus();

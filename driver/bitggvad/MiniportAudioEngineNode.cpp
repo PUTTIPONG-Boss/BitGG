@@ -766,6 +766,7 @@ NTSTATUS CMiniportWaveRT::GetVolumeChannelCount(_Out_  UINT32 *_pulChannelCount)
 
     DPF_ENTER(("[CMiniportWaveRT::GetVolumeChannelCount]"));
 
+#if defined(SYSVAD_BTH_BYPASS) || defined(SYSVAD_USB_SIDEBAND)
     if (IsSidebandDevice() && m_pSidebandDevice->IsVolumeSupported(m_DeviceType))
     {
         ULONG propSize = 0;
@@ -775,6 +776,7 @@ NTSTATUS CMiniportWaveRT::GetVolumeChannelCount(_Out_  UINT32 *_pulChannelCount)
         *_pulChannelCount = pMembers->MembersCount;
     }
     else
+#endif  // defined(SYSVAD_BTH_BYPASS) || defined(SYSVAD_USB_SIDEBAND)
     {
         *_pulChannelCount = m_DeviceMaxChannels;
     }
@@ -789,6 +791,7 @@ NTSTATUS CMiniportWaveRT::GetVolumeSteppings(_Out_writes_bytes_(_ui32DataSize) P
     ASSERT (_pKsPropStepLong);
     DPF_ENTER(("[CMiniportWaveRT::GetVolumeSteppings]"));
 
+#if defined(SYSVAD_BTH_BYPASS) || defined(SYSVAD_USB_SIDEBAND)
     if (IsSidebandDevice() && m_pSidebandDevice->IsVolumeSupported(m_DeviceType))
     {
         // For Sideband Devices copy values from the Sideband DDI property descriptor
@@ -814,6 +817,7 @@ NTSTATUS CMiniportWaveRT::GetVolumeSteppings(_Out_writes_bytes_(_ui32DataSize) P
         }
     }
     else
+#endif  // defined(SYSVAD_BTH_BYPASS) || defined(SYSVAD_USB_SIDEBAND)
     {
         ASSERT(ulChannelCount <= m_DeviceMaxChannels);
         if (ulChannelCount > m_DeviceMaxChannels)
@@ -852,11 +856,13 @@ NTSTATUS CMiniportWaveRT::GetChannelVolume(_In_  UINT32 _uiChannel, _Out_ LONG *
 
     NTSTATUS status = STATUS_SUCCESS;
 
+#if defined(SYSVAD_BTH_BYPASS) || defined(SYSVAD_USB_SIDEBAND)
     if (IsSidebandDevice() && m_pSidebandDevice->IsVolumeSupported(m_DeviceType))
     {
         status = m_pSidebandDevice->GetVolume(m_DeviceType, _uiChannel, _pVolume);
     }
     else
+#endif  // defined(SYSVAD_BTH_BYPASS) || defined(SYSVAD_USB_SIDEBAND)
     {
         if (_uiChannel == ALL_CHANNELS_ID)
         {
@@ -877,11 +883,13 @@ NTSTATUS CMiniportWaveRT::SetChannelVolume(_In_  UINT32 _uiChannel, _In_  LONG _
     PAGED_CODE ();
     DPF_ENTER(("[CMiniportWaveRT::SetChannelVolume]"));
 
+#if defined(SYSVAD_BTH_BYPASS) || defined(SYSVAD_USB_SIDEBAND)
     if (IsSidebandDevice() && m_pSidebandDevice->IsVolumeSupported(m_DeviceType))
     {
         return m_pSidebandDevice->SetVolume(m_DeviceType, _uiChannel, _Volume);
     }
     else
+#endif  // defined(SYSVAD_BTH_BYPASS) || defined(SYSVAD_USB_SIDEBAND)
     {
         // Normalize volume only for non-sideband devices.
         // Volume levels are governed by Sideband provider
@@ -979,6 +987,7 @@ NTSTATUS CMiniportWaveRT::GetMuteChannelCount(_Out_  UINT32 *_pulChannelCount)
 
     DPF_ENTER(("[CMiniportWaveRT::GetMuteChannelCount]"));
 
+#if defined(SYSVAD_BTH_BYPASS) || defined(SYSVAD_USB_SIDEBAND)
     if (IsSidebandDevice() && m_pSidebandDevice->IsMuteSupported(m_DeviceType))
     {
         ULONG propSize = 0;
@@ -988,6 +997,7 @@ NTSTATUS CMiniportWaveRT::GetMuteChannelCount(_Out_  UINT32 *_pulChannelCount)
         *_pulChannelCount = pMembers->MembersCount;
     }
     else
+#endif  // defined(SYSVAD_BTH_BYPASS) || defined(SYSVAD_USB_SIDEBAND)
     {
         *_pulChannelCount = m_DeviceMaxChannels;
     }
@@ -1002,6 +1012,7 @@ NTSTATUS CMiniportWaveRT::GetMuteSteppings(_Out_writes_bytes_(_ui32DataSize)  PK
     ASSERT (_pKsPropStepLong);
     DPF_ENTER(("[CMiniportWaveRT::GetMuteSteppings]"));
 
+#if defined(SYSVAD_BTH_BYPASS) || defined(SYSVAD_USB_SIDEBAND)
     if (IsSidebandDevice() && m_pSidebandDevice->IsMuteSupported(m_DeviceType))
     {
         // For Sideband Devices copy values from the Sideband DDI property descriptor
@@ -1028,6 +1039,7 @@ NTSTATUS CMiniportWaveRT::GetMuteSteppings(_Out_writes_bytes_(_ui32DataSize)  PK
 
     }
     else
+#endif  // defined(SYSVAD_BTH_BYPASS) || defined(SYSVAD_USB_SIDEBAND)
     {
         ASSERT(ulChannelCount <= m_DeviceMaxChannels);
 
@@ -1052,11 +1064,13 @@ NTSTATUS CMiniportWaveRT::GetChannelMute(_In_  UINT32 _uiChannel, _Out_  BOOL *_
     ASSERT (_pbMute);
     DPF_ENTER(("[CMiniportWaveRT::GetChannelMute]"));
 
+#if defined(SYSVAD_BTH_BYPASS) || defined(SYSVAD_USB_SIDEBAND)
     if (IsSidebandDevice() && m_pSidebandDevice->IsMuteSupported(m_DeviceType))
     {
         *_pbMute = m_pSidebandDevice->GetMute(m_DeviceType, _uiChannel);
     }
     else
+#endif  // defined(SYSVAD_BTH_BYPASS) || defined(SYSVAD_USB_SIDEBAND)
     {
         if (_uiChannel == ALL_CHANNELS_ID)
         {
@@ -1077,6 +1091,7 @@ NTSTATUS CMiniportWaveRT::SetChannelMute(_In_  UINT32 _uiChannel, _In_  BOOL _bM
     PAGED_CODE ();
     DPF_ENTER(("[CMiniportWaveRT::SetChannelMute]"));
 
+#if defined(SYSVAD_BTH_BYPASS) || defined(SYSVAD_USB_SIDEBAND)
     if (IsSidebandDevice() && m_pSidebandDevice->IsMuteSupported(m_DeviceType))
     {
         return m_pSidebandDevice->SetMute(m_DeviceType, _uiChannel, _bMute);
@@ -1091,6 +1106,7 @@ NTSTATUS CMiniportWaveRT::SetChannelMute(_In_  UINT32 _uiChannel, _In_  BOOL _bM
         }
     }
     else
+#endif  // defined(SYSVAD_BTH_BYPASS) || defined(SYSVAD_USB_SIDEBAND)
     {
         ASSERT(_uiChannel <= m_DeviceMaxChannels);
         m_pbMuted[_uiChannel] = _bMute;

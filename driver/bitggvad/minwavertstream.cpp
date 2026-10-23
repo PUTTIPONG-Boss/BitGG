@@ -6,6 +6,7 @@
 #include "minwavertstream.h"
 #include "UnittestData.h"
 #include "AudioModuleHelper.h"
+#include "bitggloop.h"
 #define MINWAVERTSTREAM_POOLTAG 'SRWM'
 
 #pragma warning (disable : 4127)
@@ -116,62 +117,6 @@ Return Value:
 //=============================================================================
 #pragma code_seg("PAGE")
 
-NTSTATUS CMiniportWaveRTStream::ReadRegistrySettings()
-{
-    PAGED_CODE();
-
-    NTSTATUS                    ntStatus;
-    PDRIVER_OBJECT              DriverObject;
-    HANDLE                      DriverKey;
-
-    RTL_QUERY_REGISTRY_TABLE    paramTable[] = {
-        // QueryRoutine     Flags                                               Name                            EntryContext                            DefaultType                                                     DefaultData                                 DefaultLength
-        { NULL,   RTL_QUERY_REGISTRY_DIRECT | RTL_QUERY_REGISTRY_TYPECHECK, L"HostCaptureToneFrequency",        &m_ulHostCaptureToneFrequency,          (REG_DWORD << RTL_QUERY_REGISTRY_TYPECHECK_SHIFT) | REG_DWORD,  &m_ulHostCaptureToneFrequency,              sizeof(DWORD) },
-        { NULL,   RTL_QUERY_REGISTRY_DIRECT | RTL_QUERY_REGISTRY_TYPECHECK, L"LoopbackCaptureToneFrequency",    &m_ulLoopbackCaptureToneFrequency,      (REG_DWORD << RTL_QUERY_REGISTRY_TYPECHECK_SHIFT) | REG_DWORD,  &m_ulLoopbackCaptureToneFrequency,          sizeof(DWORD) },
-        { NULL,   RTL_QUERY_REGISTRY_DIRECT | RTL_QUERY_REGISTRY_TYPECHECK, L"HostCaptureToneAmplitude",        &m_dwHostCaptureToneAmplitude,          (REG_DWORD << RTL_QUERY_REGISTRY_TYPECHECK_SHIFT) | REG_DWORD,  &m_dwHostCaptureToneAmplitude,              sizeof(DWORD) },
-        { NULL,   RTL_QUERY_REGISTRY_DIRECT | RTL_QUERY_REGISTRY_TYPECHECK, L"LoopbackCaptureToneAmplitude",    &m_dwLoopbackCaptureToneAmplitude,      (REG_DWORD << RTL_QUERY_REGISTRY_TYPECHECK_SHIFT) | REG_DWORD,  &m_dwLoopbackCaptureToneAmplitude,          sizeof(DWORD) },
-        { NULL,   RTL_QUERY_REGISTRY_DIRECT | RTL_QUERY_REGISTRY_TYPECHECK, L"HostCaptureToneDCOffset",         &m_dwHostCaptureToneDCOffset,           (REG_DWORD << RTL_QUERY_REGISTRY_TYPECHECK_SHIFT) | REG_DWORD,  &m_dwHostCaptureToneDCOffset,               sizeof(DWORD) },
-        { NULL,   RTL_QUERY_REGISTRY_DIRECT | RTL_QUERY_REGISTRY_TYPECHECK, L"LoopbackCaptureToneDCOffset",     &m_dwLoopbackCaptureToneDCOffset,       (REG_DWORD << RTL_QUERY_REGISTRY_TYPECHECK_SHIFT) | REG_DWORD,  &m_dwLoopbackCaptureToneDCOffset,           sizeof(DWORD) },
-        { NULL,   RTL_QUERY_REGISTRY_DIRECT | RTL_QUERY_REGISTRY_TYPECHECK, L"HostCaptureToneInitialPhase",     &m_dwHostCaptureToneInitialPhase,       (REG_DWORD << RTL_QUERY_REGISTRY_TYPECHECK_SHIFT) | REG_DWORD,  &m_dwHostCaptureToneInitialPhase,           sizeof(DWORD) },
-        { NULL,   RTL_QUERY_REGISTRY_DIRECT | RTL_QUERY_REGISTRY_TYPECHECK, L"LoopbackCaptureToneInitialPhase", &m_dwLoopbackCaptureToneInitialPhase,   (REG_DWORD << RTL_QUERY_REGISTRY_TYPECHECK_SHIFT) | REG_DWORD,  &m_dwLoopbackCaptureToneInitialPhase,       sizeof(DWORD) },
-        { NULL,   0,                                                        NULL,                               NULL,                                   0,                                                              NULL,                                       0 }
-    };
-
-    DriverObject = WdfDriverWdmGetDriverObject(WdfGetDriver());
-    DriverKey = NULL;
-    ntStatus = IoOpenDriverRegistryKey(DriverObject, 
-                                 DriverRegKeyParameters,
-                                 KEY_READ,
-                                 0,
-                                 &DriverKey);
-
-    if (!NT_SUCCESS(ntStatus))
-    {
-        return ntStatus;
-    }
-
-    ntStatus = RtlQueryRegistryValues(RTL_REGISTRY_HANDLE,
-                                  (PCWSTR) DriverKey,
-                                  &paramTable[0],
-                                  NULL,
-                                  NULL);
-
-    if (!NT_SUCCESS(ntStatus)) 
-    {
-        DPF(D_VERBOSE, ("RtlQueryRegistryValues failed, using default values, 0x%x", ntStatus));
-        //
-        // Don't return error because we will operate with default values.
-        //
-    }
-
-    if (DriverKey)
-    {
-        ZwClose(DriverKey);
-    }
-
-    return ntStatus;
-}
-
 NTSTATUS
 CMiniportWaveRTStream::Init
 ( 
@@ -250,14 +195,7 @@ Return Value:
     m_pAudioModules = NULL;
     m_AudioModuleCount = 0;
 
-    m_ulHostCaptureToneFrequency = IsEqualGUID(SignalProcessingMode, AUDIO_SIGNALPROCESSINGMODE_RAW) ? 1000 : 2000;
-    m_ulLoopbackCaptureToneFrequency = 3000; // 3 kHz
-    m_dwHostCaptureToneAmplitude = 50; 
-    m_dwLoopbackCaptureToneAmplitude = 50; 
-    m_dwHostCaptureToneDCOffset = 0; 
-    m_dwLoopbackCaptureToneDCOffset = 0; 
-    m_dwHostCaptureToneInitialPhase = 0; 
-    m_dwLoopbackCaptureToneInitialPhase = 0; 
+    m_ullLoopReadPos = 0;
 
 
 #if defined(SYSVAD_BTH_BYPASS) || defined(SYSVAD_USB_SIDEBAND)
@@ -344,92 +282,13 @@ Return Value:
         return ntStatus;
     }
 
+    //
+    // BitGG: no tone generator and no data files. A Mic capture stream
+    // reads the loopback ring from "now" on, so it never sees stale audio.
+    //
     if (m_bCapture)
     {
-        ReadRegistrySettings();
-            DWORD toneFrequency = 0;
-            DWORD toneAmplitude = 0;
-            DWORD toneDCOffset = 0;
-            DWORD toneInitialPhase = 0;
-
-            double toneAmplitudeDouble = 0;
-            double toneDCOffsetDouble = 0;
-            double toneInitialPhaseDouble = 0;
-
-            if (m_pMiniport->IsLoopbackPin(Pin_))
-            {
-                //
-                // Loopbacks pins use a different frequency for test validation.
-                //
-                toneFrequency = m_ulLoopbackCaptureToneFrequency;
-                toneAmplitude = m_dwLoopbackCaptureToneAmplitude;
-                toneDCOffset  = m_dwLoopbackCaptureToneDCOffset;
-                toneInitialPhase = m_dwLoopbackCaptureToneInitialPhase;
-            }
-            else
-            {
-                //
-                // Init sine wave generator. To exercise the SignalProcessingMode parameter
-                // this sample driver selects the frequency based on the parameter.
-                //
-                toneFrequency = m_ulHostCaptureToneFrequency;
-                toneAmplitude = m_dwHostCaptureToneAmplitude;
-                toneDCOffset  = m_dwHostCaptureToneDCOffset;
-                toneInitialPhase = m_dwHostCaptureToneInitialPhase;
-            }
-
-            if (labs(toneAmplitude) > 100)
-            {
-                toneAmplitude = toneAmplitude > 0 ? 100 : -100;
-            }
-
-            if (labs(toneDCOffset) > 100)
-            {
-                toneDCOffset = toneDCOffset > 0 ? 100 : -100;
-            }
-
-            DWORD abssum = labs(toneAmplitude) + labs(toneDCOffset);
-            
-            if ( abssum > 100)
-            {
-                toneAmplitudeDouble = ((double)toneAmplitude) / abssum;
-                toneDCOffsetDouble = ((double)toneDCOffset) / abssum;
-            }
-            else
-            {
-                toneAmplitudeDouble = ((double)toneAmplitude) / 100.0;
-                toneDCOffsetDouble = ((double)toneDCOffset) / 100.0;
-            }
-
-            if (labs(toneInitialPhase) > 31416)
-            {
-                toneInitialPhase = toneInitialPhase > 0 ? 31416 : -31416;
-            }
-
-            toneInitialPhaseDouble = (double)toneInitialPhase / 10000;
-
-            ntStatus = m_ToneGenerator.Init(toneFrequency, toneAmplitudeDouble, toneDCOffsetDouble, toneInitialPhaseDouble, m_pWfExt);
-        if (!NT_SUCCESS(ntStatus))
-        {
-            return ntStatus;
-        }
-    }
-    else if (!g_DoNotCreateDataFiles)
-    {
-        //
-        // Create an output file for the render data.
-        //
-        DPF(D_TERSE, ("SaveData %p", &m_SaveData));
-        ntStatus = m_SaveData.SetDataFormat(DataFormat_);
-        if (NT_SUCCESS(ntStatus))
-        {
-            ntStatus = m_SaveData.Initialize(m_pMiniport->IsOffloadPin(Pin_));
-        }
-    
-        if (!NT_SUCCESS(ntStatus))
-        {
-            return ntStatus;
-        }
+        m_ullLoopReadPos = BitggLoopReaderStart();
     }
 
     //
@@ -551,18 +410,6 @@ NTSTATUS CMiniportWaveRTStream::AllocateBufferWithNotification
 
     RequestedSize_ -= RequestedSize_ % (m_pWfExt->Format.nBlockAlign);
     
-    if (!m_bCapture && !g_DoNotCreateDataFiles)
-    {
-        NTSTATUS ntStatus;
-        
-        // Sysvad uses following buffer to hold data before writing to a file.
-        // Allocating larger buffer will reduce File I/O operations.
-        ntStatus = m_SaveData.SetMaxWriteSize(RequestedSize_ * 4);
-        if (!NT_SUCCESS(ntStatus))
-        {
-            return ntStatus;
-        }
-    }
 
     PHYSICAL_ADDRESS highAddress;
     highAddress.HighPart = 0;
@@ -1210,12 +1057,6 @@ NTSTATUS CMiniportWaveRTStream::SetState
             m_bLastBufferRendered = FALSE;
 
             KeReleaseSpinLock(&m_PositionSpinLock, oldIrql);
-
-            // Wait until all work items are completed.
-            if (!m_bCapture && !g_DoNotCreateDataFiles)
-            {
-                m_SaveData.WaitAllWorkItems();
-            }
             break;
 
         case KSSTATE_ACQUIRE:
@@ -1382,11 +1223,6 @@ NTSTATUS CMiniportWaveRTStream::SetFormat
 
     PAGED_CODE();
 
-    //if (!m_fCapture && !g_DoNotCreateDataFiles)
-    //{
-    //    ntStatus = m_SaveData.SetDataFormat(Format);
-    //}
-
     return STATUS_NOT_SUPPORTED;
 }
 
@@ -1427,7 +1263,7 @@ VOID CMiniportWaveRTStream::UpdatePosition
 
     if (m_bCapture)
     {
-        // Write sine wave to buffer.
+        // Fill the capture buffer from the loopback ring.
         WriteBytes(ByteDisplacement);
     }
     else
@@ -1469,11 +1305,8 @@ VOID CMiniportWaveRTStream::UpdatePosition
                                         0);
         }
 
-        if (!g_DoNotCreateDataFiles)
-        {
-            // Read from buffer and write to a file.
-            ReadBytes(ByteDisplacement);
-        }
+        // Render endpoints are sinks; only Mic (in) feeds the loopback ring.
+        ReadBytes(ByteDisplacement);
     }
     
     // Increment the DMA position by the number of bytes displaced since the last
@@ -1502,7 +1335,8 @@ VOID CMiniportWaveRTStream::WriteBytes
 
 Routine Description:
 
-This function writes the audio buffer using a sine wave generator
+This function fills the capture buffer. Mic streams read the loopback
+ring; any other capture stream gets silence.
 Arguments:
 
 ByteDisplacement - # of bytes to process.
@@ -1516,7 +1350,14 @@ ByteDisplacement - # of bytes to process.
     while (ByteDisplacement > 0)
     {
         ULONG runWrite = min(ByteDisplacement, m_ulDmaBufferSize - bufferOffset);
-            m_ToneGenerator.GenerateSine(m_pDmaBuffer + bufferOffset, runWrite);
+        if (m_pMiniport->m_DeviceType == eBitggMicDevice)
+        {
+            BitggLoopRead(&m_ullLoopReadPos, m_pDmaBuffer + bufferOffset, runWrite);
+        }
+        else
+        {
+            RtlZeroMemory(m_pDmaBuffer + bufferOffset, runWrite);
+        }
         bufferOffset = (bufferOffset + runWrite) % m_ulDmaBufferSize;
         ByteDisplacement -= runWrite;
     }
@@ -1532,7 +1373,8 @@ VOID CMiniportWaveRTStream::ReadBytes
 
 Routine Description:
 
-This function reads the audio buffer and saves the data in a file.
+This function consumes rendered audio. Only "Mic (in)" keeps it, by
+copying it into the loopback ring; other render endpoints are sinks.
 
 Arguments:
 
@@ -1540,6 +1382,11 @@ ByteDisplacement - # of bytes to process.
 
 --*/
 {
+    if (m_pMiniport->m_DeviceType != eBitggMicInDevice)
+    {
+        return;
+    }
+
     ULONG bufferOffset = m_ullLinearPosition % m_ulDmaBufferSize;
 
     // Normally this will loop no more than once for a single wrap, but if
@@ -1547,7 +1394,7 @@ ByteDisplacement - # of bytes to process.
     while (ByteDisplacement > 0)
     {
         ULONG runWrite = min(ByteDisplacement, m_ulDmaBufferSize - bufferOffset);
-        m_SaveData.WriteData(m_pDmaBuffer + bufferOffset, runWrite);
+        BitggLoopWrite(m_pDmaBuffer + bufferOffset, runWrite);
         bufferOffset = (bufferOffset + runWrite) % m_ulDmaBufferSize;
         ByteDisplacement -= runWrite;
     }
@@ -1583,6 +1430,9 @@ Return Value:
 
     DPF_ENTER(("[CMiniportWaveRT::SetContentId]"));
 
+    // BitGG never writes stream data anywhere, so there is nothing to protect.
+    UNREFERENCED_PARAMETER(drmRights);
+
     NTSTATUS    ntStatus;
     ULONG       ulOldContentId = contentId;
 
@@ -1601,11 +1451,6 @@ Return Value:
         m_ulContentId = ulOldContentId;
     }
 
-    //
-    // SYSVAD writes each stream seperately to disk. If the rights for this
-    // stream indicates that the stream is CopyProtected, stop writing to disk.
-    //
-    m_SaveData.Disable(drmRights->CopyProtect);
 
     //
     // From MSDN:

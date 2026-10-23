@@ -569,7 +569,12 @@ protected:
                 m_DeviceType == eBthHfpSpeakerDevice ||
                 m_DeviceType == eUsbHsSpeakerDevice  ||
                 m_DeviceType == eA2dpHpSpeakerDevice ||
-                m_DeviceType == eHandsetSpeakerDevice) ? TRUE : FALSE;
+                m_DeviceType == eHandsetSpeakerDevice ||
+                m_DeviceType == eBitggGameDevice  ||
+                m_DeviceType == eBitggChatDevice  ||
+                m_DeviceType == eBitggMediaDevice ||
+                m_DeviceType == eBitggAuxDevice   ||
+                m_DeviceType == eBitggMicInDevice) ? TRUE : FALSE;
     }
 
     BOOL IsCellularDevice()

@@ -1235,7 +1235,6 @@ CMiniportWaveRT::StreamCreated
         ALLOCATE_PIN_INSTANCE_RESOURCES(m_ulLoopbackAllocated);
         streams = m_LoopbackStreams;
         count = m_ulMaxLoopbackStreams;
-        _Stream->m_SaveData.Disable(m_MixDrmRights.CopyProtect);
     }
     else if (IsSystemRenderPin(_Pin))
     {
