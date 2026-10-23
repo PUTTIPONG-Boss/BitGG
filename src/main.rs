@@ -978,7 +978,7 @@ impl App {
             self.eq_ch = ((self.eq_ch as i32 + d).rem_euclid(5)) as usize;
         }
         let mut changed = false;
-        let preset_btns = ["FLAT", "BASS", "FPS", "VOICE", "MUSIC"];
+        let preset_btns = dsp::PRESETS;
         {
             let eq = if self.eq_ch < 4 { &mut self.cfg.audio.ch[self.eq_ch].eq } else { &mut self.cfg.audio.mic.eq };
             let mut on = eq.on;
@@ -986,15 +986,27 @@ impl App {
                 eq.on = on;
                 changed = true;
             }
+            // the preset in use lights up in the channel colour (like EQ ON);
+            // none lit = custom settings
+            let active = dsp::active_preset(eq);
             let mut x = 160;
             for p in preset_btns {
                 let w = p.len() as i32 * 8 + 8;
-                if self.ui.button(r(x, 34, w, 13), p, col) {
+                let q = r(x, 34, w, 13);
+                if active == Some(p) {
+                    self.ui.boxed(q, col, col);
+                    self.ui.text_c(q, p, BLACK);
+                    if self.ui.clicked_in(q) {
+                        *eq = dsp::preset(p); // re-apply resets any stray edits
+                        changed = true;
+                    }
+                } else if self.ui.button(q, p, col) {
                     *eq = dsp::preset(p);
                     changed = true;
                 }
                 x += w + 3;
             }
+            self.ui.tip(r(160, 34, x - 160, 13), if active.is_some() { "PRESET IN USE IS LIT" } else { "CUSTOM EQ (NO PRESET)" });
         }
         // ---- response graph
         let g = r(6, 52, 388, 100);
