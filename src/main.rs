@@ -136,6 +136,8 @@ struct App {
     /// result slot of the folder picker thread
     picked_folder: Arc<Mutex<Option<String>>>,
     rec_levels: Arc<recorder::RecLevels>,
+    /// Sonar APO bypass: original "enhancements enabled" per VAD id we changed
+    fx_saved: HashMap<String, bool>,
 }
 
 impl App {
@@ -173,6 +175,7 @@ impl App {
             mic_meter: None,
             picked_folder: Arc::new(Mutex::new(None)),
             rec_levels: Arc::new(recorder::RecLevels::default()),
+            fx_saved: HashMap::new(),
             cfg,
         };
         // GG leaves its VADs disabled when it quits; bring them back if the user opted in
@@ -204,8 +207,7 @@ impl App {
 
     fn dirty(&mut self) {
         self.shared.update(&self.engine_params());
-        self.sync_engine();
-        self.route_defaults();
+        self.sync_engine(); // also switches the Windows defaults before opening streams
         self.apply_direct(self.cfg.audio.engine_on, false);
         if self.dirty_since.is_none() {
             self.dirty_since = Some(Instant::now());
@@ -243,13 +245,67 @@ impl App {
     }
     fn sync_engine(&mut self) {
         let want = self.needs_engine();
-        if want && self.engine.is_none() {
-            self.engine = Some(Engine::start(self.shared.clone()));
-        } else if !want {
+        if want {
+            // Order matters: changing a device's enhancements makes Windows
+            // rebuild its audio pipeline, which silently kills streams that are
+            // already open. Bypass first, let it settle, then open the engine.
+            let bypassed = self.apo_bypass(true);
+            // switch Windows' defaults BEFORE opening streams (a later switch
+            // can leave already-open captures delivering silence)
+            let rerouted = self.route_defaults();
+            if (bypassed || rerouted) && self.engine.is_some() {
+                if let Some(mut e) = self.engine.take() {
+                    e.stop(); // reopen on the new pipeline below
+                }
+                std::thread::sleep(Duration::from_millis(300));
+            }
+            if self.engine.is_none() {
+                self.engine = Some(Engine::start(self.shared.clone()));
+            }
+        } else {
             if let Some(mut e) = self.engine.take() {
                 e.stop();
             }
+            self.apo_bypass(false);
         }
+    }
+
+    /// Sonar's APO inside the VADs keeps GG's last settings, including its own
+    /// "copy to headset" forwarding: with BitGG's engine also forwarding, every
+    /// sound plays twice. While the engine runs, switch the VADs' enhancements
+    /// off (the Sound panel's "Disable all enhancements") so BitGG is the only
+    /// path; put each device's original setting back when the engine stops.
+    /// Returns true if any device setting was changed (pipelines restarted).
+    fn apo_bypass(&mut self, on: bool) -> bool {
+        let mut changed = false;
+        if on {
+            for i in 0..4 {
+                if !self.ch_live(i) {
+                    continue;
+                }
+                let id = self.cfg.audio.ch[i].source.clone();
+                if self.fx_saved.contains_key(&id) {
+                    continue;
+                }
+                if let Some(enabled) = win_audio::enhancements_enabled(&id) {
+                    if enabled && win_audio::set_enhancements(&id, false) {
+                        self.fx_saved.insert(id, true);
+                        changed = true;
+                    }
+                }
+            }
+            if changed {
+                // Windows rebuilds the device pipeline asynchronously; streams
+                // opened too early can go silently stale (the engine's watchdog
+                // also catches that, but don't rely on it)
+                std::thread::sleep(Duration::from_millis(1500));
+            }
+        } else {
+            for (id, orig) in std::mem::take(&mut self.fx_saved) {
+                changed |= win_audio::set_enhancements(&id, orig);
+            }
+        }
+        changed
     }
     fn direct_gain(&self, i: usize) -> f32 {
         let a = &self.cfg.audio;
@@ -400,8 +456,15 @@ impl App {
         self.sessions = win_audio::list_sessions(&self.devs);
         self.routes = self.sessions.iter().flat_map(|s| s.pids.clone()).map(|p| (p, win_audio::get_app_output(p))).collect();
         self.last_refresh = Instant::now();
-        // follow a default-device change made in Windows
-        self.route_defaults();
+        // follow a default-device change made in Windows; reopen the engine's
+        // streams afterwards (see sync_engine)
+        if self.engine.is_some() && self.route_defaults() {
+            if let Some(mut e) = self.engine.take() {
+                e.stop();
+            }
+            std::thread::sleep(Duration::from_millis(300));
+            self.sync_engine();
+        }
         // newly started processes of an assigned program join their channel
         self.apply_direct(self.cfg.audio.engine_on, false);
     }
@@ -474,10 +537,12 @@ impl App {
     /// through GAME and the mixer/EQ) and the default mic is the virtual mic.
     /// If the user picks a real device as default in Windows, BitGG adopts it as
     /// its own output/mic input and points the default back at the virtual one.
-    fn route_defaults(&mut self) {
-        if self.engine.is_none() {
-            return; // guard_defaults() restores real devices when the engine is off
+    /// Returns true if a Windows default device was switched.
+    fn route_defaults(&mut self) -> bool {
+        if !self.needs_engine() {
+            return false; // guard_defaults() restores real devices when the engine is off
         }
+        let mut switched = false;
         let is_phys = |a: &App, id: &str| a.devs.iter().any(|d| d.id == id && !win_audio::is_virtual(&d.name));
         let mut changed = false;
         if self.ch_live(0) {
@@ -489,7 +554,7 @@ impl App {
                         self.cfg.audio.output = def;
                         changed = true;
                     }
-                    win_audio::set_default_device(&game);
+                    switched |= win_audio::set_default_device(&game);
                 }
             }
         }
@@ -505,7 +570,7 @@ impl App {
                         self.cfg.audio.mic.input = def;
                         changed = true;
                     }
-                    win_audio::set_default_device(&vmic);
+                    switched |= win_audio::set_default_device(&vmic);
                 }
             }
         }
@@ -515,6 +580,7 @@ impl App {
                 self.dirty_since = Some(Instant::now());
             }
         }
+        switched
     }
 
     /// Safety net: Windows' default output/mic may only be a virtual device while
@@ -1387,6 +1453,10 @@ impl App {
     fn quit(&mut self, el: &ActiveEventLoop) {
         tray::remove();
         self.apply_direct(false, true); // leave every app as we found it
+        if let Some(mut e) = self.engine.take() {
+            e.stop();
+        }
+        let _ = self.apo_bypass(false); // give Sonar's APO its settings back
         self.guard_defaults(true); // nothing forwards the VADs after exit
         self.cfg.save();
         self.rec = None;
@@ -1928,7 +1998,28 @@ fn dsptest() {
     if !a.cfg.audio.engine_on {
         a.set_engine(true);
     }
-    std::thread::sleep(Duration::from_secs(3));
+    // test with GAME/MASTER audible regardless of the saved mute state (not saved)
+    a.cfg.audio.ch[0].mute = false;
+    a.cfg.audio.master_mute = false;
+    a.dirty();
+    a.dirty_since = None; // never write the config from a test
+    // timeline: does GAME carry audio, and does the engine recover?
+    let exe0 = std::env::temp_dir().join("tonechild0.exe");
+    let _ = std::fs::copy(std::env::current_exe().unwrap(), &exe0);
+    std::thread::sleep(Duration::from_millis(300));
+    a.refresh();
+    let mut child0 = std::process::Command::new(&exe0).arg("--quiet-tone").spawn().expect("child0");
+    let gm = win_audio::endpoint_meter(&a.cfg.audio.ch[0].source);
+    for k in 0..12 {
+        std::thread::sleep(Duration::from_millis(500));
+        let dev_pk = gm.as_ref().map(|m| unsafe { m.GetPeakValue().unwrap_or(-1.0) }).unwrap_or(-2.0);
+        let child_dev = win_audio::list_sessions(&a.devs).iter().find(|s| s.pids.contains(&child0.id())).map(|s| nm(&s.device)).unwrap_or("no session".into());
+        println!("  t={:>4.1}s  Windows meter on Gaming {:.3} | engine GAME {:.3} MASTER {:.3} [{}] | tone app on: {}", (k + 1) as f32 * 0.5, dev_pk, a.shared.meter(0), a.shared.meter(5), a.shared.status.lock().unwrap(), child_dev);
+    }
+    let _ = child0.kill();
+    let _ = child0.wait();
+    let _ = std::fs::remove_file(&exe0);
+    std::thread::sleep(Duration::from_secs(1));
     a.refresh();
     println!("engine running: {}  GAME is DSP: {}", a.engine.is_some(), a.ch_live(0));
     println!("after start: default output = {}   BitGG output = {}", nm(&win_audio::default_id(true).unwrap_or_default()), nm(&a.cfg.audio.output));
@@ -1963,7 +2054,8 @@ fn dsptest() {
     a.dirty();
     std::thread::sleep(Duration::from_millis(500));
     let full = hear(&out);
-    println!("GAME 100%: GAME meter {:.3}, what you hear {:.3}", a.shared.meter(0), full);
+    println!("GAME 100%: GAME meter {:.3}, MASTER meter {:.3}, what you hear {:.3}", a.shared.meter(0), a.shared.meter(5), full);
+    println!("engine status: {}", a.shared.status.lock().unwrap());
     a.cfg.audio.ch[0].vol = 0.2;
     a.dirty();
     std::thread::sleep(Duration::from_millis(500));
@@ -1978,8 +2070,229 @@ fn dsptest() {
     if let Some(mut e) = a.engine.take() {
         e.stop();
     }
+    let _ = a.apo_bypass(false);
     a.guard_defaults(true);
     println!("after stop: default output = {}", nm(&win_audio::default_id(true).unwrap_or_default()));
+}
+
+/// Does anything besides BitGG forward a VAD to a real output (e.g. Sonar's
+/// APO "copy output device" left on by GG)? Plays a quiet 440 Hz tone into a
+/// VAD and looks for exactly that frequency on every physical output.
+fn apotest() {
+    fn goertzel(x: &[f32], f: f32) -> f32 {
+        // left channel only, magnitude at f (normalised by length)
+        let w = 2.0 * std::f32::consts::PI * f / 48_000.0;
+        let c = 2.0 * w.cos();
+        let (mut s1, mut s2) = (0.0f32, 0.0f32);
+        let n = x.len() / 2;
+        for i in 0..n {
+            let s0 = x[i * 2] + c * s1 - s2;
+            s2 = s1;
+            s1 = s0;
+        }
+        (s1 * s1 + s2 * s2 - c * s1 * s2).max(0.0).sqrt() / n.max(1) as f32
+    }
+    let devs = win_audio::list_devices();
+    let outs: Vec<_> = devs.iter().filter(|d| d.render && !win_audio::is_virtual(&d.name)).cloned().collect();
+    let listen = |id: &str| -> f32 {
+        let Ok(mut c) = wasapi::Capture::new(id, true) else { return -1.0 };
+        let mut q = std::collections::VecDeque::new();
+        let t = Instant::now();
+        while t.elapsed() < Duration::from_millis(1500) {
+            let _ = c.drain(&mut q);
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let v: Vec<f32> = q.into_iter().collect();
+        goertzel(&v, 440.0)
+    };
+    for vad in ["Sonar - Gaming", "Sonar - Media"] {
+        let Some(src) = devs.iter().find(|d| d.render && d.name.contains(vad)).map(|d| d.id.clone()) else { continue };
+        println!("== tone into {vad}");
+        for o in &outs {
+            let base = listen(&o.id);
+            let s2 = src.clone();
+            let h = std::thread::spawn(move || {
+                win_audio::com_init();
+                let Ok(mut r) = wasapi::Render::new(&s2, false, 100) else { return };
+                let mut ph = 0f32;
+                let t = Instant::now();
+                while t.elapsed() < Duration::from_millis(2000) {
+                    let n = r.free_frames().unwrap_or(0) as usize;
+                    let mut v = Vec::with_capacity(n * 2);
+                    for _ in 0..n {
+                        let x = (ph * std::f32::consts::TAU).sin() * 0.03;
+                        ph = (ph + 440.0 / 48000.0).fract();
+                        v.push(x);
+                        v.push(x);
+                    }
+                    let _ = r.write(&v);
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+            });
+            std::thread::sleep(Duration::from_millis(300));
+            let with = listen(&o.id);
+            let _ = h.join();
+            let verdict = if with > base * 4.0 && with > 0.002 { "FORWARDED HERE" } else { "-" };
+            println!("   {:<45} 440Hz without {:.4}  with tone {:.4}  {verdict}", o.name, base, with);
+        }
+    }
+}
+
+/// The engine alone on the Gaming VAD (enhancements off, settled first),
+/// output to the silent Steam device. Restores the device setting at the end.
+fn enginetest_vad() {
+    let devs = win_audio::list_devices();
+    let find = |pat: &str| devs.iter().find(|d| d.render && d.name.contains(pat)).map(|d| d.id.clone()).unwrap_or_default();
+    let gaming = find("Sonar - Gaming");
+    let orig = win_audio::enhancements_enabled(&gaming).unwrap_or(true);
+    let orig_def = win_audio::default_id(true).unwrap_or_default();
+    for (fx_on, as_default) in [(true, false), (false, false), (true, true), (false, true)] {
+        win_audio::set_enhancements(&gaming, fx_on);
+        win_audio::set_default_device(if as_default { &gaming } else { &orig_def });
+        std::thread::sleep(Duration::from_millis(1500));
+        let mut a = config::Audio::default();
+        a.ch[0].source = gaming.clone();
+        a.ch[0].vol = 1.0;
+        a.master = 1.0;
+        a.output = find("Speakers (Steam Streaming Microphone)");
+        a.engine_on = true;
+        let sh = Shared::new(a);
+        let mut e = Engine::start(sh.clone());
+        std::thread::sleep(Duration::from_millis(800));
+        let g = gaming.clone();
+        let h = std::thread::spawn(move || {
+            win_audio::com_init();
+            let Ok(mut r) = wasapi::Render::new(&g, false, 100) else { return };
+            let mut ph = 0f32;
+            let t = Instant::now();
+            while t.elapsed() < Duration::from_millis(2500) {
+                let n = r.free_frames().unwrap_or(0) as usize;
+                let mut v = Vec::with_capacity(n * 2);
+                for _ in 0..n {
+                    let x = (ph * std::f32::consts::TAU).sin() * 0.3;
+                    ph = (ph + 440.0 / 48000.0).fract();
+                    v.push(x);
+                    v.push(x);
+                }
+                let _ = r.write(&v);
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        });
+        let mut best = 0.0f32;
+        for _ in 0..10 {
+            std::thread::sleep(Duration::from_millis(250));
+            best = best.max(sh.meter(0));
+        }
+        let _ = h.join();
+        println!("enhancements {:<3} | Gaming is default: {:<5} -> engine GAME meter peak {:.3} (tone 0.3)  [{}]", if fx_on { "on" } else { "off" }, as_default, best, sh.status.lock().unwrap());
+        e.stop();
+    }
+    win_audio::set_enhancements(&gaming, orig);
+    win_audio::set_default_device(&orig_def);
+}
+
+/// Does the VAD loopback ever deliver NaN / inf samples, and does the EQ survive them?
+fn nantest() {
+    let devs = win_audio::list_devices();
+    let gaming = devs.iter().find(|d| d.render && d.name.contains("Sonar - Gaming")).map(|d| d.id.clone()).unwrap();
+    let orig = win_audio::enhancements_enabled(&gaming).unwrap_or(true);
+    for fx_on in [true, false] {
+        win_audio::set_enhancements(&gaming, fx_on);
+        std::thread::sleep(Duration::from_millis(1500));
+        let Ok(mut c) = wasapi::Capture::new(&gaming, true) else { println!("open failed"); continue };
+        let mut q = std::collections::VecDeque::new();
+        let g = gaming.clone();
+        let h = std::thread::spawn(move || {
+            win_audio::com_init();
+            let Ok(mut r) = wasapi::Render::new(&g, false, 100) else { return };
+            let mut ph = 0f32;
+            let t = Instant::now();
+            while t.elapsed() < Duration::from_millis(3000) {
+                let n = r.free_frames().unwrap_or(0) as usize;
+                let mut v = Vec::with_capacity(n * 2);
+                for _ in 0..n {
+                    let x = (ph * std::f32::consts::TAU).sin() * 0.3;
+                    ph = (ph + 440.0 / 48000.0).fract();
+                    v.push(x);
+                    v.push(x);
+                }
+                let _ = r.write(&v);
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        });
+        let t = Instant::now();
+        while t.elapsed() < Duration::from_secs(3) {
+            let _ = c.drain(&mut q);
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let _ = h.join();
+        let v: Vec<f32> = q.into_iter().collect();
+        let bad = v.iter().filter(|x| !x.is_finite()).count();
+        let big = v.iter().filter(|x| x.is_finite() && x.abs() > 4.0).count();
+        let mut eq = dsp::EqProc::default();
+        eq.configure(&dsp::preset("BASS"));
+        let mut w = v.clone();
+        eq.process(&mut w);
+        let bad_after = w.iter().filter(|x| !x.is_finite()).count();
+        let pk = v.iter().filter(|x| x.is_finite()).fold(0.0f32, |m, x| m.max(x.abs()));
+        println!("enhancements {:<3}: {} samples, peak {:.3}, NaN/inf {}, |x|>4 {}, after BASS EQ NaN/inf {}", if fx_on { "on" } else { "off" }, v.len(), pk, bad, big, bad_after);
+    }
+    win_audio::set_enhancements(&gaming, orig);
+}
+
+/// Which device change kills an already-open loopback capture?
+fn staletest() {
+    let devs = win_audio::list_devices();
+    let gaming = devs.iter().find(|d| d.render && d.name.contains("Sonar - Gaming")).map(|d| d.id.clone()).unwrap();
+    let orig_def = win_audio::default_id(true).unwrap_or_default();
+    let tone_into = |id: String| {
+        std::thread::spawn(move || {
+            win_audio::com_init();
+            let Ok(mut r) = wasapi::Render::new(&id, false, 100) else { return };
+            let mut ph = 0f32;
+            let t = Instant::now();
+            while t.elapsed() < Duration::from_millis(1500) {
+                let n = r.free_frames().unwrap_or(0) as usize;
+                let mut v = Vec::with_capacity(n * 2);
+                for _ in 0..n {
+                    let x = (ph * std::f32::consts::TAU).sin() * 0.03;
+                    ph = (ph + 440.0 / 48000.0).fract();
+                    v.push(x);
+                    v.push(x);
+                }
+                let _ = r.write(&v);
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        })
+    };
+    for (label, set_def, fx_off) in [("nothing", false, false), ("set default", true, false), ("enhancements off", false, true), ("both", true, true)] {
+        let mut cap = wasapi::Capture::new(&gaming, true).expect("capture");
+        let mut q = std::collections::VecDeque::new();
+        if set_def {
+            win_audio::set_default_device(&gaming);
+        }
+        if fx_off {
+            win_audio::set_enhancements(&gaming, false);
+        }
+        std::thread::sleep(Duration::from_millis(600));
+        let h = tone_into(gaming.clone());
+        let t = Instant::now();
+        let mut err = None;
+        while t.elapsed() < Duration::from_millis(1500) {
+            if let Err(e) = cap.drain(&mut q) {
+                err = Some(e.message());
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let _ = h.join();
+        let pk = q.iter().fold(0.0f32, |m, x| m.max(x.abs()));
+        println!("open capture, then {:<17} -> peak {:.4}  error: {:?}", label, pk, err);
+        drop(cap);
+        win_audio::set_enhancements(&gaming, true);
+        win_audio::set_default_device(&orig_def);
+        std::thread::sleep(Duration::from_millis(600));
+    }
 }
 
 /// Read-only: where does each app's sound actually go right now?
@@ -2015,6 +2328,22 @@ fn main() {
     }
     if args.get(1).map(|s| s == "--dsptest").unwrap_or(false) {
         dsptest();
+        return;
+    }
+    if args.get(1).map(|s| s == "--apotest").unwrap_or(false) {
+        apotest();
+        return;
+    }
+    if args.get(1).map(|s| s == "--enginetest-vad").unwrap_or(false) {
+        enginetest_vad();
+        return;
+    }
+    if args.get(1).map(|s| s == "--nantest").unwrap_or(false) {
+        nantest();
+        return;
+    }
+    if args.get(1).map(|s| s == "--staletest").unwrap_or(false) {
+        staletest();
         return;
     }
     if args.get(1).map(|s| s == "--diag").unwrap_or(false) {
