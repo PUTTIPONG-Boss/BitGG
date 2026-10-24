@@ -51,11 +51,13 @@ VBoxManage snapshot BitGG-DriverTest take clean-install
 
 ## 3. Prepare the guest (VM, elevated PowerShell)
 
-**Shortcut:** `B:	est\Run-All.ps1` does steps 3, T1 and the automated tests in one go. It needs one UAC approval and reboots once; it continues by itself after the reboot and writes `B:esultsun-all-status.txt`, `install.log` and `drivertest-*.log`. Start it in the VM with:
+**Shortcut:** `\\VBoxSvr\bitggvad-test\test\Run-All.ps1` does steps 3, T1 and the automated tests in one go. It needs one UAC approval and reboots once; it continues by itself after the reboot and writes `results\run-all-status.txt`, `install.log` and `drivertest-*.log` into the shared folder. Start it in the VM with Win+R:
 
 ```powershell
-Start-Process powershell -Verb RunAs -ArgumentList '-ExecutionPolicy Bypass -File B:	est\Run-All.ps1'
+powershell -ExecutionPolicy Bypass -Command "Start-Process powershell -Verb RunAs -ArgumentList '-ExecutionPolicy Bypass -File \\VBoxSvr\bitggvad-test\test\Run-All.ps1'"
 ```
+
+Use the `\\VBoxSvr\bitggvad-test` path, not `B:`. An elevated (admin) process does not see drive letters mapped in the normal session, so `B:\...` fails with "file not found" when run as admin. For the manual steps below, in an admin PowerShell run `cd \\VBoxSvr\bitggvad-test` first and use `.\test\...` paths.
 
 Manually, step by step:
 

@@ -1,6 +1,7 @@
-# Inside the TEST VM: right-click -> Run with PowerShell is not elevated, so run
-#   Start-Process powershell -Verb RunAs -ArgumentList '-ExecutionPolicy Bypass -File B:\test\Run-All.ps1'
-# (or open an admin terminal and run it). One UAC approval covers everything:
+# Inside the TEST VM run (Win+R):
+#   powershell -ExecutionPolicy Bypass -Command "Start-Process powershell -Verb RunAs -ArgumentList '-ExecutionPolicy Bypass -File \\VBoxSvr\bitggvad-test\test\Run-All.ps1'"
+# Use the \\VBoxSvr path, not B: - elevated processes don't see drive letters
+# mapped in the normal session. One UAC approval covers everything:
 #   1. Prepare-Guest (test signing + kernel dumps), then reboot
 #   2. after the reboot (RunOnce, at the next admin logon): install the driver,
 #      run the functional tests and write B:\results\*.log
