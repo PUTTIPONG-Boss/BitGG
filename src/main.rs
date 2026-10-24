@@ -712,7 +712,6 @@ impl App {
         if self.slow_refresh.elapsed() > Duration::from_secs(8) {
             self.slow_refresh = Instant::now();
             self.refresh();
-            self.maybe_check_update();
         }
         let _ = ticks;
         self.ui.begin();
@@ -1564,13 +1563,9 @@ impl App {
         let st = self.update.lock().unwrap().clone();
         match st {
             update::State::Downloading(v) => {
-                self.ui.text_tiny(78, 6, &v, DGREY);
+                self.ui.text_tiny(78, 6, &format!("GET {v}"), YELLOW);
             }
             update::State::Ready { version, .. } => {
-                if !self.update_notified {
-                    self.update_notified = true;
-                    tray::notify("BitGG update ready", &format!("{version} is downloaded and verified. Open BitGG and click UPDATE to restart into it."));
-                }
                 let label = format!("UPDATE {}", version.to_uppercase());
                 let w = label.len() as i32 * 8 + 8;
                 let q = r(78, 1, w, 12);
@@ -1590,6 +1585,19 @@ impl App {
                 self.ui.tip(q, "RESTART TO UPDATE (SETTINGS ARE KEPT)");
             }
             _ => {}
+        }
+    }
+
+    /// Tray balloon once a verified update is ready. Runs from the event
+    /// loop, so it also fires while BitGG sits in the tray.
+    fn notify_update_ready(&mut self) {
+        if self.update_notified {
+            return;
+        }
+        let st = self.update.lock().unwrap().clone();
+        if let update::State::Ready { version, .. } = st {
+            self.update_notified = true;
+            tray::notify("BitGG update ready", &format!("{version} is downloaded and verified. Open BitGG and click UPDATE to restart into it."));
         }
     }
 
@@ -1779,6 +1787,10 @@ impl ApplicationHandler<UserEv> for App {
     }
 
     fn about_to_wait(&mut self, el: &ActiveEventLoop) {
+        // draw() only runs while the window is visible; the update check and
+        // its notification must also work for a copy that lives in the tray.
+        self.maybe_check_update();
+        self.notify_update_ready();
         if let Some(t) = self.dirty_since {
             if t.elapsed() > Duration::from_secs(2) {
                 self.cfg.save();
