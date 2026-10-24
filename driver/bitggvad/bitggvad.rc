@@ -1,0 +1,35 @@
+// BitGG Virtual Audio driver version resource.
+
+#include <windows.h>
+
+#define BITGG_VER_NUM   0,1,0,0
+#define BITGG_VER_STR   "0.1.0.0"
+
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION     BITGG_VER_NUM
+PRODUCTVERSION  BITGG_VER_NUM
+FILEFLAGSMASK   VS_FFI_FILEFLAGSMASK
+FILEFLAGS       0
+FILEOS          VOS_NT_WINDOWS32
+FILETYPE        VFT_DRV
+FILESUBTYPE     VFT2_DRV_SOUND
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName",      "BitGG"
+            VALUE "FileDescription",  "BitGG Virtual Audio Driver"
+            VALUE "FileVersion",      BITGG_VER_STR
+            VALUE "InternalName",     "bitggvad.sys"
+            VALUE "LegalCopyright",   "Copyright (C) BitGG contributors. Based on the Microsoft SysVAD sample (MS-PL)."
+            VALUE "OriginalFilename", "bitggvad.sys"
+            VALUE "ProductName",      "BitGG"
+            VALUE "ProductVersion",   BITGG_VER_STR
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0409, 1200
+    END
+END
