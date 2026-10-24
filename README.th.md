@@ -183,6 +183,12 @@ BitGG ออกแบบให้ **ไม่แตะ process ของเก�
 - **KEY HOOK** (เสริม) เป็น low-level keyboard hook มาตรฐาน กลไกเดียวกับ push-to-talk ของ Discord ปิดไว้โดยปริยาย และไม่ต้องเปิด ยกเว้นกรณีที่ปุ่ม save ทุกปุ่มถูกจองหมด
 - BitGG ไม่มีฟีเจอร์ GameSense / RGB และไม่คุยกับ SteelSeries Engine
 
+## Roadmap
+
+- **BitGG Virtual Audio driver**: อุปกรณ์เสียงเสมือนของ BitGG เอง เพื่อให้ EQ และการแยกช่องเสียงใช้ได้โดยไม่ต้องมี SteelSeries GG สเปกอยู่ที่ [docs/driver/SPEC.md](docs/driver/SPEC.md) ระหว่างที่ driver ยังไม่ได้เซ็นและยังไม่ออก BitGG ใช้อุปกรณ์ของ Sonar, VB-Cable / Voicemeeter หรือโหมด DIRECT ไปก่อน
+
+---
+
 ## License
 
 [MIT](LICENSE) ส่วน SteelSeries, Sonar, GG และ Moments เป็นเครื่องหมายการค้าของเจ้าของนั้น ๆ BitGG เป็นโปรเจกต์ทำงานร่วม (interoperability) แบบอิสระ
