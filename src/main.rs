@@ -1255,13 +1255,22 @@ impl App {
             self.rec_levels.set_gains(config::slider_gain(self.cfg.clips.rec_audio_gain), config::slider_gain(self.cfg.clips.rec_mic_gain));
             self.dirty();
         }
-        // compressed packets live in RAM: show the budget and the live size
+        // Compressed packets live in RAM: show the buffer budget, its live size
+        // and what Task Manager should roughly show for BitGG as a whole
+        // (measured: ~18 MB app, ~14 MB more for capture + encoder).
+        const APP_MB: f32 = 18.0;
+        const PIPELINE_MB: f32 = 14.0;
         let mb = c.bitrate_kbps as f32 / 8.0 / 1024.0 * (c.replay_secs + 3) as f32;
-        self.ui.text(270, 62, &format!("RAM ~{:.0} MB", mb), DGREY);
-        if let Some(r) = self.rec.as_ref().filter(|r| r.mode == Mode::Replay) {
-            let live = r.ring_mb();
-            self.ui.text(270, 74, &format!("NOW {:.0} MB", live), GREEN);
-        }
+        self.ui.text(270, 58, &format!("BUFFER ~{:.0} MB", mb), WHITE);
+        let total = if let Some(r) = self.rec.as_ref().filter(|r| r.mode == Mode::Replay) {
+            self.ui.text(270, 69, &format!("NOW {:.0} MB", r.ring_mb()), GREEN);
+            APP_MB + PIPELINE_MB + mb
+        } else {
+            self.ui.text(270, 69, "REPLAY OFF", DGREY);
+            APP_MB
+        };
+        self.ui.text(270, 80, &format!("TOTAL ~{:.0} MB", total), LGREY);
+        self.ui.tip(r(270, 56, 124, 32), "VIDEO KEPT IN RAM: LESS SEC/BITRATE = LESS RAM");
         // save hotkey: works in-game while BitGG is in the tray
         self.ui.text_s(270, 140, "SAVE KEY", LGREY);
         let d = self.ui.spinner(r(270, 150, 124, 12), &self.cfg.clips.save_key.clone(), YELLOW);
