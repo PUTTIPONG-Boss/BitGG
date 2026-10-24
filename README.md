@@ -38,7 +38,7 @@ Settings are saved to `%APPDATA%\BitGG\config.json`. Clips go to `Videos\BitGG` 
 
 BitGG updates itself. When a new release is out, it downloads it in the background, checks it against the release's SHA-256, and shows a blinking **UPDATE vX.Y.Z** button next to the logo (plus a tray notification). Click it: BitGG puts your audio back to normal, swaps the exe, and restarts into the new version. Your settings are kept.
 
-The check is one request to GitHub's release API at startup and every 6 hours. Nothing about you or your PC is sent. Turn it off in **SETUP → UPDATES**. If it's off, or you're on v0.1.0 (before the updater existed), just download the new `BitGG.exe` and replace the old one.
+The check is one request to GitHub's release API at startup, every 6 hours, and when you open the BitGG window (at most every 30 minutes). **SETUP → CHECK NOW** checks right away. Nothing about you or your PC is sent. Turn it off in **SETUP → UPDATES**. If it's off, or you're on v0.1.0 (before the updater existed), just download the new `BitGG.exe` and replace the old one.
 
 ### "Windows protected your PC" / antivirus warning
 
