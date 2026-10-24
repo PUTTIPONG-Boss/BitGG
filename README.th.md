@@ -111,7 +111,7 @@ git push -u origin fix-mic-gain   # เปิด PR: fix-mic-gain -> master
 พอ `master` พร้อมออกเวอร์ชัน:
 
 1. **เพิ่มเลขเวอร์ชัน** ใน `Cargo.toml` (ทำบน branch แล้ว PR เข้า `master`) เลขนี้คือเลขที่แสดงข้างโลโก้และบนแถบชื่อหน้าต่าง แก้บั๊กใช้ `0.1.0 → 0.1.1` เพิ่มฟีเจอร์ใหม่ใช้ `0.1.x → 0.2.0`
-2. เปิด PR **`master` → `main`** แล้ว merge
+2. เปิด PR **`master` → `main`** แล้ว merge ส่วน driver เสียงเสมือน (`driver/`, `docs/driver/`) ยังพัฒนาอยู่บน `master` และยังห้ามออก release ถ้า merge แล้วมันติดเข้า `main` ให้เอาออก (แตก branch จาก `main` แล้ว `git rm -r driver docs/driver` จากนั้น PR เข้า `main`) workflow จะไม่ยอมออก release ถ้า commit ที่ tag ยังมี driver อยู่
 3. tag บน `main` ด้วยเลข**เดียวกัน** (ถ้า tag ไม่ตรงกับ `Cargo.toml` workflow จะไม่ยอมออก release)
 
 ```sh
