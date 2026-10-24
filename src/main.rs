@@ -15,6 +15,7 @@ mod update;
 mod picker;
 mod shortcuts;
 mod hotkey;
+mod leaktest;
 mod wasapi;
 mod win_audio;
 
@@ -2638,6 +2639,10 @@ fn main() {
                 Err(e) => println!("{label}: {} | OPEN FAILED {e}", name(&id)),
             }
         }
+        return;
+    }
+    if args.get(1).map(|s| s == "--leaktest").unwrap_or(false) {
+        leaktest::run();
         return;
     }
     if args.get(1).map(|s| s == "--vadtest").unwrap_or(false) {
