@@ -48,6 +48,19 @@ jobs:
             exit 1
           fi
 
+      # The virtual audio driver is developed on master but is not ready to ship
+      # (untested, needs EV + Microsoft attestation signing). Keep it off main.
+      - name: No unreleased driver work on main
+        run: |
+          FOUND=""
+          for p in driver docs/driver; do
+            if [ -n "$(git ls-tree -d --name-only "$GITHUB_SHA" -- "$p")" ]; then FOUND="$FOUND $p/"; fi
+          done
+          if [ -n "$FOUND" ]; then
+            echo "::error::$GITHUB_REF_NAME contains unreleased driver work:$FOUND. Remove it from main (git rm -r driver docs/driver) and tag again."
+            exit 1
+          fi
+
       - name: Install Rust (stable)
         run: rustup toolchain install stable --profile minimal && rustup default stable
 
