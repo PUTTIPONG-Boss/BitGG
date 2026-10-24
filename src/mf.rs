@@ -135,6 +135,12 @@ fn sps_pps(au: &[u8]) -> Option<Vec<u8>> {
 
 pub struct VideoEnc {
     mft: IMFTransform,
+    /// Must get ShutdownObject() when we're done, or the encoder (and its
+    /// worker threads) outlives us: that leaked ~15 threads per restart.
+    activate: IMFActivate,
+    /// D3D device manager we gave the encoder; released (by both) on drop,
+    /// otherwise it keeps the D3D11 device and its driver threads alive.
+    d3d_mgr: Option<IMFDXGIDeviceManager>,
     events: Option<IMFMediaEventGenerator>,
     codec: Option<ICodecAPI>,
     need_input: u32,
@@ -205,6 +211,7 @@ impl VideoEnc {
             let _ = attrs.SetUINT32(&MF_LOW_LATENCY, 1);
             // hand the encoder our D3D11 device so it can read GPU textures directly
             let mut hw_textures = false;
+            let mut d3d_mgr = None;
             if attrs.GetUINT32(&MF_SA_D3D11_AWARE).unwrap_or(0) != 0 {
                 if let Ok(mt) = device.cast::<ID3D11Multithread>() {
                     let _ = mt.SetMultithreadProtected(TRUE);
@@ -215,7 +222,7 @@ impl VideoEnc {
                 let mgr = mgr.unwrap();
                 mgr.ResetDevice(device, token)?;
                 hw_textures = mft.ProcessMessage(MFT_MESSAGE_SET_D3D_MANAGER, mgr.as_raw() as usize).is_ok();
-                std::mem::forget(mgr); // the MFT holds a reference; keep ours for its lifetime
+                d3d_mgr = Some(mgr);
             }
             let codec = mft.cast::<ICodecAPI>().ok();
             if let Some(c) = &codec {
@@ -256,6 +263,8 @@ impl VideoEnc {
             let events = if is_async { Some(mft.cast::<IMFMediaEventGenerator>()?) } else { None };
             Ok(VideoEnc {
                 mft,
+                activate: a.clone(),
+                d3d_mgr,
                 events,
                 codec,
                 need_input: 0,
@@ -389,19 +398,32 @@ impl Drop for VideoEnc {
         unsafe {
             let _ = self.mft.ProcessMessage(MFT_MESSAGE_NOTIFY_END_OF_STREAM, 0);
             let _ = self.mft.ProcessMessage(MFT_MESSAGE_NOTIFY_END_STREAMING, 0);
+            if self.d3d_mgr.is_some() {
+                let _ = self.mft.ProcessMessage(MFT_MESSAGE_SET_D3D_MANAGER, 0); // encoder drops its reference
+            }
             if let Ok(s) = self.mft.cast::<IMFShutdown>() {
                 let _ = s.Shutdown();
             }
+            let _ = self.activate.ShutdownObject();
         }
     }
 }
 
 // ===================================================================== audio
 
+impl Drop for AudioEnc {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = self.activate.ShutdownObject();
+        }
+    }
+}
+
 pub const A_RATE: u32 = 48_000;
 
 pub struct AudioEnc {
     mft: IMFTransform,
+    activate: IMFActivate,
     pub user_data: Vec<u8>,
     pub avg_bytes: u32,
     out_size: u32,
@@ -451,6 +473,7 @@ impl AudioEnc {
             mft.ProcessMessage(MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0)?;
             Ok(AudioEnc {
                 mft,
+                activate: a.clone(),
                 user_data,
                 avg_bytes: bitrate_bytes,
                 out_size: info.cbSize.max(8192),

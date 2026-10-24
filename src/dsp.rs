@@ -97,6 +97,29 @@ pub fn preset(name: &str) -> EqSettings {
     e
 }
 
+/// Preset buttons, in UI order.
+pub const PRESETS: [&str; 5] = ["FLAT", "BASS", "FPS", "VOICE", "MUSIC"];
+
+/// Which preset these settings currently are, if any (None = custom edits).
+/// FLAT = EQ off, or on with every band at 0 dB (both sound identical).
+pub fn active_preset(e: &EqSettings) -> Option<&'static str> {
+    let same_band = |a: &Band, b: &Band| {
+        a.on == b.on
+            && a.kind == b.kind
+            && (a.freq - b.freq).abs() < 0.5
+            && (a.gain_db - b.gain_db).abs() < 0.05
+            && (a.q - b.q).abs() < 0.01
+    };
+    let flat = preset("FLAT");
+    if !e.on || e.bands.iter().zip(&flat.bands).all(|(a, b)| same_band(a, b)) {
+        return Some("FLAT");
+    }
+    PRESETS.iter().skip(1).copied().find(|name| {
+        let p = preset(name);
+        e.bands.iter().zip(&p.bands).all(|(a, b)| same_band(a, b))
+    })
+}
+
 #[derive(Clone, Copy, Default)]
 pub struct Coef {
     b0: f32,
@@ -310,4 +333,22 @@ pub fn fader_to_lin(v: f32) -> f32 {
 pub fn chatmix(balance: f32) -> (f32, f32) {
     let b = balance.clamp(-1.0, 1.0);
     ((1.0 - b).min(1.0), (1.0 + b).min(1.0))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn active_preset_detection() {
+        for name in PRESETS {
+            assert_eq!(active_preset(&preset(name)), Some(name), "{name}");
+        }
+        let mut off = preset("BASS");
+        off.on = false;
+        assert_eq!(active_preset(&off), Some("FLAT")); // EQ off sounds flat
+        let mut custom = preset("BASS");
+        custom.bands[3].gain_db += 1.5;
+        assert_eq!(active_preset(&custom), None); // edited = custom
+    }
 }
