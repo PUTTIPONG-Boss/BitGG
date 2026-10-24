@@ -65,12 +65,14 @@ Each endpoint is a SysVAD-style **wave + topology miniport pair** (WaveRT). Name
 
 | Endpoint | Flow | Formats offered | Default | Notes |
 |---|---|---|---|---|
-| **BitGG Game** | render | 48 kHz stereo **and** 48 kHz 7.1; 16/24-bit PCM, 32-bit float | 48 kHz stereo float | 7.1 for games with surround mixing; BitGG folds it |
-| **BitGG Chat** | render | 48 kHz stereo; 16/32f | 48 kHz stereo float | |
-| **BitGG Media** | render | 48 kHz stereo; 16/32f | 48 kHz stereo float | |
-| **BitGG Aux** | render | 48 kHz stereo; 16/32f | 48 kHz stereo float | |
-| **BitGG Mic (in)** | render | 48 kHz stereo; 16/32f | 48 kHz stereo float | BitGG writes the processed mic here |
-| **BitGG Mic** | capture | 48 kHz mono **and** stereo; 16/32f | 48 kHz mono | what Discord etc. select; reads from "BitGG Mic (in)" |
+| **BitGG Game** | render | 48 kHz 16-bit, stereo **and** 7.1 | stereo | 7.1 for games with surround mixing; BitGG folds it |
+| **BitGG Chat** | render | 48 kHz 16-bit stereo | stereo | |
+| **BitGG Media** | render | 48 kHz 16-bit stereo | stereo | |
+| **BitGG Aux** | render | 48 kHz 16-bit stereo | stereo | |
+| **BitGG Mic (in)** | render | 48 kHz 16-bit stereo | stereo | BitGG writes the processed mic here |
+| **BitGG Mic** | capture | 48 kHz 16-bit stereo | stereo | what Discord etc. select; reads from "BitGG Mic (in)" |
+
+Phase 1 implements 16-bit PCM only, the path SysVAD itself uses and tests. The Windows audio engine mixes in float and converts, so shared-mode apps are unaffected. Exclusive-mode apps must use 48 kHz 16-bit. 24-bit/float device formats are a later improvement. Mic (in) and Mic share one format, so the loopback copies bytes with no conversion.
 
 Why 48 kHz everywhere: BitGG's engine runs at 48 kHz, so no resampling happens in Windows or BitGG. 44.1 kHz can be added later if a real app needs it (Windows' mixer converts anyway).
 
@@ -84,13 +86,12 @@ Endpoint properties set by the INF:
 ### 4.3 Streaming
 
 - **Render pins (Game/Chat/Media/Aux):** WaveRT buffer allocated by the miniport. A high-resolution timer (`ExAllocateTimer`, 1–10 ms period) advances the play position at the format's byte rate and signals notification events. Data is **not read**: these endpoints are sinks (§3.1). This is SysVAD's simulated-hardware path with the sine/file stages removed.
-- **Mic loopback (Mic (in) → Mic):**
-  - One shared ring buffer in non-paged pool, 48 kHz stereo float, ~200 ms.
-  - The render stream's timer DPC copies newly "played" frames from its WaveRT buffer into the ring.
-  - The capture stream's timer DPC copies frames from the ring into its WaveRT buffer, converting stereo→mono when the capture format is mono.
-  - If the capture side underruns, it writes silence. If the ring is full, the oldest data is dropped. Never block, never allocate in the DPC.
-  - When either side isn't running, the ring is cleared, so stale audio is never delivered.
-  - Format conversion is limited to float↔int16/24 and stereo↔mono, all in the DPC with fixed-size work.
+- **Mic loopback (Mic (in) → Mic), `bitggloop.cpp`:**
+  - One static 64 KB ring (~340 ms at 48 kHz 16-bit stereo) behind a spin lock.
+  - When the render stream's position advances, the newly "played" bytes are appended to the ring.
+  - Each capture stream keeps its own read position, so Discord and OBS can both record the mic.
+  - A capture stream starts reading at "now", so it never gets stale audio. If it underruns, it writes silence. If it falls more than 100 ms behind, it skips ahead to 20 ms behind.
+  - Never block, never allocate. Same format on both sides, so no conversion.
 - Clock: all streams run off the system timer (no hardware), the same as SysVAD's virtual mode.
 
 ### 4.4 What BitGG changes (app side)
@@ -111,7 +112,7 @@ Endpoint properties set by the INF:
 
 ## 6. Build & test plan
 
-**Build (Phase 1):** Windows SDK + WDK 10.0.26100, Visual Studio, `driver/bitggvad/` in this repo. Starting point is the SysVAD sample's TabletAudioSample/endpoint structure, reduced to the endpoints above. The license notice for the sample is kept.
+**Build (Phase 1, done):** Visual Studio with the WDK component, plus WDK/SDK 10.0.28000 from NuGet, as in Microsoft's samples. The code is in `driver/bitggvad/`, starting from SysVAD's TabletAudioSample and reduced to the endpoints above. The sample's license notice is kept. Build steps and the list of changes are in [driver/README.md](../../driver/README.md). The INF passes `infverif /w`.
 
 **Test (Phase 2), in a VM, not on a gaming PC.** Test-signing needs Secure Boot off, and kernel bugs crash the machine.
 
