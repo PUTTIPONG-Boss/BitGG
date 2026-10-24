@@ -51,6 +51,14 @@ VBoxManage snapshot BitGG-DriverTest take clean-install
 
 ## 3. Prepare the guest (VM, elevated PowerShell)
 
+**Shortcut:** `B:	est\Run-All.ps1` does steps 3, T1 and the automated tests in one go. It needs one UAC approval and reboots once; it continues by itself after the reboot and writes `B:esultsun-all-status.txt`, `install.log` and `drivertest-*.log`. Start it in the VM with:
+
+```powershell
+Start-Process powershell -Verb RunAs -ArgumentList '-ExecutionPolicy Bypass -File B:	est\Run-All.ps1'
+```
+
+Manually, step by step:
+
 ```powershell
 Set-ExecutionPolicy -Scope Process Bypass
 B:\test\Prepare-Guest.ps1     # test signing on + kernel dumps, reboots
