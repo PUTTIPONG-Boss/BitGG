@@ -111,7 +111,7 @@ git push -u origin fix-mic-gain   # open a PR: fix-mic-gain -> master
 When `master` is ready to ship:
 
 1. **Bump the version** in `Cargo.toml` (on a branch, PR into `master`). It's the version shown next to the logo and in the title bar. Use `0.1.0 → 0.1.1` for fixes, `0.1.x → 0.2.0` for new features.
-2. Open a PR **`master` → `main`** and merge it.
+2. Open a PR **`master` → `main`** and merge it. The virtual audio driver (`driver/`, `docs/driver/`) is still work in progress on `master` and must not ship: if the merge brings it into `main`, remove it there (`git rm -r driver docs/driver` on a branch from `main`, PR into `main`). The release workflow refuses a tag whose commit contains it.
 3. Tag on `main` with the **same** version (the release workflow refuses a tag that doesn't match `Cargo.toml`):
 
 ```sh
