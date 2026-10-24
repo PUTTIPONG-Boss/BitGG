@@ -13,7 +13,3 @@ desktop.ini
 
 # build artifacts: binaries ship via GitHub Releases
 /dist/
-
-# driver: NuGet WDK packages and build output
-/driver/packages/
-/driver/bitggvad/x64/
