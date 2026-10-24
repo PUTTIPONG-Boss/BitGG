@@ -4,6 +4,7 @@
 //! Moments (replay buffer + recording), reconstructed from the shipped GG 103.
 
 mod config;
+mod drivertest;
 mod dsp;
 mod dxgi;
 mod engine;
@@ -2639,6 +2640,9 @@ fn main() {
             }
         }
         return;
+    }
+    if args.get(1).map(|s| s == "--drivertest").unwrap_or(false) {
+        std::process::exit(drivertest::run(&args[2..]));
     }
     if args.get(1).map(|s| s == "--vadtest").unwrap_or(false) {
         vadtest();

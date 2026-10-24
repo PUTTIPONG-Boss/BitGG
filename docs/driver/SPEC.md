@@ -114,7 +114,7 @@ Endpoint properties set by the INF:
 
 **Build (Phase 1, done):** Visual Studio with the WDK component, plus WDK/SDK 10.0.28000 from NuGet, as in Microsoft's samples. The code is in `driver/bitggvad/`, starting from SysVAD's TabletAudioSample and reduced to the endpoints above. The sample's license notice is kept. Build steps and the list of changes are in [driver/README.md](../../driver/README.md). The INF passes `infverif /w`.
 
-**Test (Phase 2), in a VM, not on a gaming PC.** Test-signing needs Secure Boot off, and kernel bugs crash the machine.
+**Test (Phase 2), in a VM, not on a gaming PC.** Step-by-step procedure, scripts and pass criteria: [TESTPLAN.md](TESTPLAN.md). Test-signing needs Secure Boot off, and kernel bugs crash the machine.
 
 1. VirtualBox (Windows 11 Home has no Hyper-V) + Windows 11 evaluation VM, Secure Boot off, `bcdedit /set testsigning on`.
 2. Install with a test certificate. All 6 endpoints appear in Sound settings with the right names, formats and form factors.
