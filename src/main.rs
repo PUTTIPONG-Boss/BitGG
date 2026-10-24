@@ -1470,16 +1470,19 @@ impl App {
             }
             changed = true;
         }
-        self.ui.tip(r(6, 218, 120, 11), "CHECKS GITHUB FOR A NEW RELEASE (6H)");
+        self.ui.tip(r(6, 218, 120, 11), "CHECKS GITHUB: AT START, EVERY 6H, ON OPEN");
+        if self.ui.button(r(132, 218, 80, 11), "CHECK NOW", BLUE) {
+            self.check_update_now();
+        }
         let st = match self.update.lock().unwrap().clone() {
             update::State::Idle => String::new(),
             update::State::Checking => "CHECKING...".into(),
             update::State::UpToDate => format!("UP TO DATE (V{})", update::current()),
             update::State::Downloading(v) => format!("DOWNLOADING {}", v.to_uppercase()),
-            update::State::Ready { version, .. } => format!("{} READY: CLICK UPDATE", version.to_uppercase()),
+            update::State::Ready { version, .. } => format!("{} READY", version.to_uppercase()),
             update::State::Error(e) => format!("UPDATE: {}", e.to_uppercase()),
         };
-        self.ui.text_fit(132, 220, &st, 32, if st.contains("READY") { GREEN } else { DGREY });
+        self.ui.text_fit(218, 220, &st, 22, if st.contains("READY") { GREEN } else { DGREY });
         if self.sonar_running {
             self.ui.text_s(6, 231, "GG SONAR RUNNING: QUIT GG FIRST", ORANGE);
         }
@@ -1497,6 +1500,7 @@ impl App {
         }
         self.visible = true;
         self.force_present = true;
+        self.check_update_after(Duration::from_secs(30 * 60));
     }
 
     fn hide_to_tray(&mut self) {
@@ -1528,18 +1532,31 @@ impl App {
 
     // ---------------------------------------------------------- updates
 
+    /// Periodic check while BitGG runs (startup, then every 6 h).
     fn maybe_check_update(&mut self) {
+        self.check_update_after(Duration::from_secs(6 * 3600));
+    }
+
+    /// Check unless updates are off or we checked within `min_gap`.
+    /// Opening the window uses a short gap, so a new release shows up
+    /// soon even when BitGG has been sitting in the tray for days.
+    fn check_update_after(&mut self, min_gap: Duration) {
         if self.cfg.update_check_off {
             return;
         }
         let due = match self.last_update_check {
             None => true,
-            Some(t) => t.elapsed() > Duration::from_secs(6 * 3600),
+            Some(t) => t.elapsed() > min_gap,
         };
         if due {
-            self.last_update_check = Some(Instant::now());
-            update::spawn_check(self.update.clone());
+            self.check_update_now();
         }
+    }
+
+    /// Manual "CHECK NOW" (also works with automatic checks off).
+    fn check_update_now(&mut self) {
+        self.last_update_check = Some(Instant::now());
+        update::spawn_check(self.update.clone());
     }
 
     /// Header: "UPDATE vX.Y.Z" button once a verified download is ready.
