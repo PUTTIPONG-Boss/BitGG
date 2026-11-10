@@ -280,6 +280,20 @@ impl Ui {
         d
     }
 
+    /// Spinner whose value box also opens a list: (arrow step, box clicked).
+    pub fn spinner_list(&mut self, q: R, label: &str, accent: u32) -> (i32, bool) {
+        let d = self.spinner(q, label, accent);
+        let inner = r(q.x + 14, q.y, q.w - 28, q.h);
+        let hov = self.hover(inner);
+        if hov {
+            self.hline(inner.x + 1, inner.y, inner.w - 2, accent);
+            self.hline(inner.x + 1, inner.y + inner.h - 1, inner.w - 2, accent);
+            self.vline(inner.x, inner.y + 1, inner.h - 2, accent);
+            self.vline(inner.x + inner.w - 1, inner.y + 1, inner.h - 2, accent);
+        }
+        (d, hov && self.inp.released)
+    }
+
     /// Vertical fader with block-segment fill. Value 0..1.
     pub fn vslider(&mut self, wid: u64, q: R, v: &mut f32, accent: u32) -> bool {
         let hov = self.hover(q);
