@@ -103,6 +103,27 @@ fn cycle<T: PartialEq + Copy>(opts: &[T], cur: T, d: i32) -> T {
     opts[((i + d).rem_euclid(opts.len() as i32)) as usize]
 }
 
+/// Which setting an open device list changes.
+#[derive(Clone, Copy)]
+enum PickTarget {
+    /// SETUP row: 0 output, 1..=4 channel sources, 5 mic in, 6 mic out
+    Slot(usize),
+    RecAudio,
+    RecMic,
+}
+
+/// An open device list, drawn over the page.
+#[derive(Clone, Copy)]
+struct DevPicker {
+    target: PickTarget,
+    /// y of the row that opened it; the list hangs below that row
+    row_y: i32,
+    scroll: usize,
+}
+
+/// Rows that fit between the header and the bottom of the window.
+const PICK_MAX_ROWS: usize = 17;
+
 struct App {
     cfg: Config,
     ui: Ui,
@@ -144,6 +165,7 @@ struct App {
     last_update_check: Option<Instant>,
     update_notified: bool,
     update_requested: bool,
+    picker: Option<DevPicker>,
 }
 
 impl App {
@@ -185,6 +207,7 @@ impl App {
             update: Arc::new(Mutex::new(update::State::Idle)),
             last_update_check: None,
             update_notified: false,
+            picker: None,
             update_requested: false,
             cfg,
         };
@@ -534,6 +557,118 @@ impl App {
         ids[((i + d).rem_euclid(ids.len() as i32)) as usize].clone()
     }
 
+    /// Everything a setting can be set to, as (value, label).
+    fn pick_options(&self, target: PickTarget) -> Vec<(String, String)> {
+        let none = String::new;
+        let (render, virt_only, mut out): (bool, bool, Vec<(String, String)>) = match target {
+            PickTarget::Slot(s) if (1..=4).contains(&s) || s == 6 => (true, true, vec![(none(), "(NONE) = DIRECT MODE".into())]),
+            PickTarget::Slot(s) => (s != 5, false, vec![(none(), "(NONE)".into())]),
+            PickTarget::RecAudio => (true, false, vec![(none(), "AUTO (WHAT YOU HEAR)".into())]),
+            PickTarget::RecMic => (false, false, vec![(none(), "AUTO (DEFAULT MIC)".into()), ("-".into(), "NO MIC".into())]),
+        };
+        out.extend(
+            self.devs
+                .iter()
+                .filter(|d| d.render == render && (!virt_only || win_audio::is_virtual(&d.name)))
+                .map(|d| (d.id.clone(), self.dev_name(&d.id))),
+        );
+        out
+    }
+
+    fn pick_current(&self, target: PickTarget) -> String {
+        let a = &self.cfg.audio;
+        let c = &self.cfg.clips;
+        match target {
+            PickTarget::Slot(0) => a.output.clone(),
+            PickTarget::Slot(s @ 1..=4) => a.ch[s - 1].source.clone(),
+            PickTarget::Slot(5) => a.mic.input.clone(),
+            PickTarget::Slot(_) => a.mic.target.clone(),
+            PickTarget::RecAudio => c.rec_audio.clone(),
+            PickTarget::RecMic if c.rec_mic.is_empty() && !c.record_mic => "-".into(),
+            PickTarget::RecMic => c.rec_mic.clone(),
+        }
+    }
+
+    fn pick_apply(&mut self, target: PickTarget, value: String) {
+        match target {
+            PickTarget::Slot(s) => {
+                match s {
+                    0 => self.cfg.audio.output = value,
+                    1..=4 => self.cfg.audio.ch[s - 1].source = value,
+                    5 => self.cfg.audio.mic.input = value,
+                    _ => self.cfg.audio.mic.target = value,
+                }
+                self.dirty();
+            }
+            PickTarget::RecAudio => {
+                self.cfg.clips.rec_audio = value;
+                self.restart_rec_if_replay();
+            }
+            PickTarget::RecMic => {
+                self.cfg.clips.record_mic = value != "-";
+                self.cfg.clips.rec_mic = value;
+                self.restart_rec_if_replay();
+            }
+        }
+    }
+
+    fn open_picker(&mut self, target: PickTarget, row_y: i32) {
+        // start with the current device in view
+        let cur = self.pick_current(target);
+        let at = self.pick_options(target).iter().position(|(v, _)| *v == cur).unwrap_or(0);
+        self.picker = Some(DevPicker { target, row_y, scroll: at.saturating_sub(PICK_MAX_ROWS / 2) });
+    }
+
+    /// The open device list. Drawn last; the page below gets no mouse input
+    /// while it is open (see draw).
+    fn device_picker(&mut self) {
+        let Some(p) = self.picker else { return };
+        let opts = self.pick_options(p.target);
+        let cur = self.pick_current(p.target);
+        let rows = opts.len().min(PICK_MAX_ROWS);
+        let (x, w, h) = (6, 388, rows as i32 * 13 + 4);
+        let mut y = p.row_y + 13;
+        if y + h > H as i32 - 2 {
+            y = (H as i32 - 2 - h).max(16);
+        }
+        let panel = r(x, y, w, h);
+        let max_scroll = opts.len() - rows;
+        let wheel = self.ui.wheel_in(panel);
+        let scroll = (p.scroll as i32 - wheel).clamp(0, max_scroll as i32) as usize;
+        self.ui.fill(r(x + 2, y + 2, w, h), DGREY); // drop shadow
+        self.ui.boxed(panel, BLACK, YELLOW);
+        let row_w = w - 4 - if max_scroll > 0 { 5 } else { 0 };
+        let mut chosen = None;
+        for (i, (value, label)) in opts.iter().enumerate().skip(scroll).take(rows) {
+            let q = r(x + 2, y + 2 + (i - scroll) as i32 * 13, row_w, 13);
+            let is_cur = *value == cur;
+            let hov = q.has(self.ui.inp.mx, self.ui.inp.my);
+            let (bg, fg) = if is_cur { (GREEN, BLACK) } else if hov { (NAVY, YELLOW) } else { (BLACK, WHITE) };
+            self.ui.fill(q, bg);
+            self.ui.text_fit(q.x + 4, q.y + 3, label, ((row_w - 8) / 8) as usize, fg);
+            if self.ui.clicked_in(q) {
+                chosen = Some(value.clone());
+            }
+        }
+        if max_scroll > 0 {
+            let track = h - 4;
+            let bar = (track * rows as i32 / opts.len() as i32).max(6);
+            let top = (track - bar) * scroll as i32 / max_scroll as i32;
+            self.ui.fill(r(x + w - 6, y + 2, 4, track), NAVY);
+            self.ui.fill(r(x + w - 6, y + 2 + top, 4, bar), YELLOW);
+        }
+        if let Some(value) = chosen {
+            self.picker = None;
+            if value != cur {
+                self.pick_apply(p.target, value);
+            }
+        } else if self.ui.inp.released && !self.ui.clicked_in(panel) {
+            self.picker = None; // clicked elsewhere
+        } else {
+            self.picker = Some(DevPicker { scroll, ..p });
+        }
+    }
+
     fn set_engine(&mut self, on: bool) {
         self.cfg.audio.engine_on = on;
         self.apply_direct(on, true); // off = every app gets its own volume/output back
@@ -715,6 +850,14 @@ impl App {
         }
         let _ = ticks;
         self.ui.begin();
+        // An open list sits on top: the page underneath must not react to the mouse.
+        let picker_was_open = self.picker.is_some();
+        let real_input = self.ui.inp;
+        if picker_was_open {
+            let i = &mut self.ui.inp;
+            (i.mx, i.my) = (-1000, -1000);
+            (i.down, i.pressed, i.released, i.wheel) = (false, false, false, 0);
+        }
         self.ui.clear(0x10142a);
         // scanline-ish background stripes
         for y in (0..H as i32).step_by(4) {
@@ -729,6 +872,14 @@ impl App {
             Tab::Setup => self.tab_setup(),
         }
         self.footer();
+        if picker_was_open {
+            self.ui.inp = real_input;
+        } else {
+            // opened by this very click: it must not count as a click on the list
+            self.ui.inp.released = false;
+            self.ui.inp.wheel = 0;
+        }
+        self.device_picker();
         if let Some(t) = self.ui.tooltip.clone() {
             let w = t.len() as i32 * 8 + 6;
             let x = (self.ui.inp.mx + 8).min(W as i32 - w - 1);
@@ -1193,7 +1344,11 @@ impl App {
         for (i, (k, v)) in rows.iter().enumerate() {
             let y = row_y(i);
             self.ui.text_s(6, y + 2, k, LGREY);
-            let d = self.ui.spinner(r(80, y, 180, 11), v, if i >= 6 { GREEN } else { BLUE });
+            let q = r(80, y, 180, 11);
+            let (d, open) = if i >= 6 { self.ui.spinner_list(q, v, GREEN) } else { (self.ui.spinner(q, v, BLUE), false) };
+            if open {
+                self.open_picker(if i == 6 { PickTarget::RecAudio } else { PickTarget::RecMic }, y);
+            }
             if d == 0 {
                 continue;
             }
@@ -1367,7 +1522,10 @@ impl App {
             } else {
                 self.dev_name(cur)
             };
-            let d = self.ui.spinner(r(86, y, 308, 12), &name, if gone { LAVENDER } else { BLUE });
+            let (d, open) = self.ui.spinner_list(r(86, y, 308, 12), &name, if gone { LAVENDER } else { BLUE });
+            if open {
+                self.open_picker(PickTarget::Slot(*slot), y);
+            }
             if d != 0 {
                 let nv = self.cycle_dev(cur, *render, d, virt);
                 match slot {
@@ -1507,6 +1665,7 @@ impl App {
             w.set_visible(false);
         }
         self.visible = false;
+        self.picker = None;
         self.cfg.save();
     }
 
@@ -1765,6 +1924,13 @@ impl ApplicationHandler<UserEv> for App {
                 self.ui.inp.pressed = down;
                 self.ui.inp.released = !down;
                 self.ui.inp.down = down;
+                redraw(self);
+            }
+            WindowEvent::KeyboardInput { event, .. }
+                if event.state == ElementState::Pressed
+                    && event.logical_key == winit::keyboard::Key::Named(winit::keyboard::NamedKey::Escape) =>
+            {
+                self.picker = None;
                 redraw(self);
             }
             WindowEvent::MouseWheel { delta, .. } => {
