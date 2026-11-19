@@ -17,7 +17,7 @@ use windows::Win32::System::IO::{CancelIoEx, GetOverlappedResult, OVERLAPPED};
 /// (USB product id, name) of supported dongles, SteelSeries vendor id 0x1038.
 const SUPPORTED: [(u16, &str); 2] = [(0x2232, "Arctis Nova 5"), (0x2253, "Arctis Nova 5X")];
 const REPORT_LEN: usize = 65; // report id + 64 bytes
-const POLL: Duration = Duration::from_secs(60);
+const POLL: Duration = Duration::from_secs(30);
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Battery {
@@ -129,13 +129,51 @@ pub fn read() -> Option<Battery> {
     find().into_iter().find_map(|(path, name)| query(&path).and_then(|r| decode(name, &r)))
 }
 
+/// The status byte only changes when the headset sends a fresh report, which
+/// it does for the battery level (event b7) but not for plugging/unplugging
+/// the charger unless SteelSeries GG asks it to. So the charging flag can go
+/// stale while the level stays accurate. Use the level's direction instead:
+/// rising = charging (plugging in also makes it jump up at once), falling =
+/// on battery; a changed status byte is fresh and wins; unchanged keeps the
+/// previous answer (e.g. 100 % on the charger).
+#[derive(Default)]
+pub struct ChargeTracker {
+    last: Option<(u8, bool)>, // (percent, status says charging)
+    charging: bool,
+}
+
+impl ChargeTracker {
+    pub fn update(&mut self, b: &mut Battery) {
+        let Some(p) = b.percent else {
+            self.last = None;
+            return;
+        };
+        self.charging = match self.last {
+            None => b.charging,
+            Some((_, was)) if was != b.charging => b.charging,
+            Some((lp, _)) if p > lp => true,
+            Some((lp, _)) if p < lp => false,
+            Some(_) => self.charging,
+        };
+        self.last = Some((p, b.charging));
+        b.charging = self.charging;
+    }
+}
+
 /// Poll in the background and keep the tray's battery icon up to date.
 pub fn spawn() {
     std::thread::Builder::new()
         .name("headset".into())
-        .spawn(|| loop {
-            crate::tray::set_battery(read());
-            std::thread::sleep(POLL);
+        .spawn(|| {
+            let mut tracker = ChargeTracker::default();
+            loop {
+                let mut b = read();
+                if let Some(b) = b.as_mut() {
+                    tracker.update(b);
+                }
+                crate::tray::set_battery(b);
+                std::thread::sleep(POLL);
+            }
         })
         .ok();
 }
@@ -173,6 +211,26 @@ mod tests {
     fn unknown_status_shows_no_level() {
         let off = decode("x", &[0x00, 0xb0, 0x01, 0x01, 0x00, 0x00]).unwrap();
         assert_eq!((off.percent, off.charging), (None, false));
+    }
+
+    fn bat(percent: u8, charging: bool) -> Battery {
+        Battery { name: "x", percent: Some(percent), charging }
+    }
+
+    #[test]
+    fn charging_follows_the_level_when_the_status_is_stale() {
+        let mut t = ChargeTracker::default();
+        let mut run = |p, status| {
+            let mut b = bat(p, status);
+            t.update(&mut b);
+            b.charging
+        };
+        assert!(run(100, true)); // GG woke the headset: fresh "charging"
+        assert!(run(100, true)); // full on the charger, unchanged
+        assert!(!run(99, true)); // unplugged: level falls, status is stale
+        assert!(!run(95, true));
+        assert!(run(97, true)); // plugged in again: level jumps up
+        assert!(!run(97, false)); // a fresh status byte wins
     }
 
     #[test]
