@@ -37,6 +37,8 @@ features = [
     "Win32_Media_KernelStreaming",
     "Win32_Media_MediaFoundation",
     "Win32_Devices_FunctionDiscovery",
+    "Win32_Devices_DeviceAndDriverInstallation",
+    "Win32_Devices_HumanInterfaceDevice",
     "Win32_UI_Shell",
     "Win32_UI_Shell_Common",
     "Win32_UI_Shell_PropertiesSystem",
