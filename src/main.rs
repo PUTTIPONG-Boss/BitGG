@@ -14,6 +14,7 @@ mod tray;
 mod update;
 mod picker;
 mod shortcuts;
+mod headset;
 mod hotkey;
 mod leaktest;
 mod wasapi;
@@ -2849,6 +2850,10 @@ fn main() {
         leaktest::run();
         return;
     }
+    if args.get(1).map(|s| s == "--headset").unwrap_or(false) {
+        headset::diag();
+        return;
+    }
     if args.get(1).map(|s| s == "--vadtest").unwrap_or(false) {
         vadtest();
         return;
@@ -2889,6 +2894,7 @@ fn main() {
     let el = EventLoop::<UserEv>::with_user_event().build().expect("event loop");
     hotkey::spawn(el.create_proxy(), &cfg.clips.save_key, cfg.clips.kbd_hook);
     tray::spawn(el.create_proxy());
+    headset::spawn();
     let mut app = App::new(cfg);
     app.start_hidden = start_hidden;
     let _ = el.run_app(&mut app);
