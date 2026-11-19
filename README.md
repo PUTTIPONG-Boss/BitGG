@@ -60,6 +60,7 @@ BitGG does not obfuscate or pack its binary, sends no data about you (its only n
 - **10-band parametric EQ (EQ tab):** drag points on the response graph, scroll to change Q, presets (Flat / Bass / FPS / Voice / Music). Works on each channel and the mic.
 - **ChatMix:** one slider to balance game vs. chat.
 - **Mic:** noise gate + EQ.
+- **Headset battery in the taskbar:** with a SteelSeries Arctis Nova 5 / 5X dongle plugged in, a second tray icon shows the battery % under a small headset (blue while charging, red at 20% or less). Read straight from the dongle, no GG needed.
 - **Two modes, automatic:**
   - **DSP** (green dot) — when a channel points at a *virtual audio device* (Sonar's VADs or e.g. VB-Cable), audio is routed through it and fully processed (EQ, gate, mix).
   - **DIRECT** (purple dot) — when there is no virtual device, the fader simply scales the real volume of the apps you assigned. No EQ, but it always works with zero setup.

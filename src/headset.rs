@@ -27,14 +27,18 @@ pub struct Battery {
     pub charging: bool,
 }
 
-/// Reply to `00 b0`: `00 b0 <status> <?> <battery %> <charging>`.
-/// Observed on an Arctis Nova 5: `00 b0 03 03 0a 03` (headset on).
+/// Reply to `00 b0`: `00 b0 <status> <status> <battery %> ..`.
+/// Observed on an Arctis Nova 5 (the dongle also announces battery changes by
+/// itself as event `00 b7 <battery %> <status>` on MI_05):
+///   `00 b0 02 02 30 01`  on battery, 48 %
+///   `00 b0 03 03 39 01`  charger plugged in (the level jumps up), 57 %
+/// Any other status (headset off / out of range) shows no level.
 pub fn decode(name: &'static str, r: &[u8]) -> Option<Battery> {
     if r.len() < 6 || r[1] != 0xb0 {
         return None;
     }
-    let percent = (r[4] <= 100).then_some(r[4]);
-    Some(Battery { name, percent, charging: false })
+    let connected = matches!(r[2], 0x02 | 0x03) && r[4] <= 100;
+    Some(Battery { name, percent: connected.then_some(r[4]), charging: connected && r[2] == 0x03 })
 }
 
 /// Device paths of the vendor interface of every supported dongle present.
@@ -158,15 +162,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn decodes_observed_reply() {
-        let b = decode("Arctis Nova 5", &[0x00, 0xb0, 0x03, 0x03, 0x0a, 0x03, 0, 0]).unwrap();
-        assert_eq!(b.percent, Some(10));
+    fn decodes_observed_replies() {
+        let on_battery = decode("Arctis Nova 5", &[0x00, 0xb0, 0x02, 0x02, 0x30, 0x01, 0, 0]).unwrap();
+        assert_eq!((on_battery.percent, on_battery.charging), (Some(48), false));
+        let charging = decode("Arctis Nova 5", &[0x00, 0xb0, 0x03, 0x03, 0x39, 0x01, 0, 0]).unwrap();
+        assert_eq!((charging.percent, charging.charging), (Some(57), true));
+    }
+
+    #[test]
+    fn unknown_status_shows_no_level() {
+        let off = decode("x", &[0x00, 0xb0, 0x01, 0x01, 0x00, 0x00]).unwrap();
+        assert_eq!((off.percent, off.charging), (None, false));
     }
 
     #[test]
     fn rejects_other_reports() {
         assert!(decode("x", &[0x00, 0xb1, 0x03, 0x03, 0x0a, 0x03]).is_none());
         assert!(decode("x", &[0x00, 0xb0]).is_none());
-        assert_eq!(decode("x", &[0x00, 0xb0, 0x03, 0x03, 0xff, 0x03]).unwrap().percent, None);
+        assert_eq!(decode("x", &[0x00, 0xb0, 0x02, 0x02, 0xff, 0x01]).unwrap().percent, None);
     }
 }
