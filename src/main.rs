@@ -147,6 +147,7 @@ struct App {
     dirty_since: Option<Instant>,
     visible: bool,
     sonar_running: bool,
+    last_sonar_check: Instant,
     clips: Vec<std::path::PathBuf>,
     slow_refresh: Instant,
     last_frame: Vec<u32>,
@@ -193,6 +194,7 @@ impl App {
             dirty_since: None,
             visible: true,
             sonar_running: false,
+            last_sonar_check: Instant::now() - Duration::from_secs(60), // check on the first tick
             clips: Vec::new(),
             slow_refresh: Instant::now(),
             last_frame: Vec::new(),
@@ -481,8 +483,28 @@ impl App {
         self.vads = win_audio::sonar_vads();
         self.mic_meter = if self.cfg.audio.mic.input.is_empty() { None } else { win_audio::endpoint_meter(&self.cfg.audio.mic.input) };
         self.refresh_light();
-        self.sonar_running = is_running("SteelSeriesSonar.exe");
         self.clips = recent_clips(&self.cfg.clips.folder);
+    }
+
+    /// GG/Sonar disables its virtual devices when it quits. If that happens
+    /// while BitGG runs (window or tray), turn them back on, like at startup.
+    fn watch_sonar_exit(&mut self) {
+        if self.last_sonar_check.elapsed() < Duration::from_secs(5) {
+            return;
+        }
+        self.last_sonar_check = Instant::now();
+        let running = is_running("SteelSeriesSonar.exe");
+        let was_running = std::mem::replace(&mut self.sonar_running, running);
+        if was_running && !running && self.cfg.audio.auto_vads {
+            std::thread::sleep(Duration::from_secs(2)); // let Sonar finish tearing down
+            let (n, total) = win_audio::set_sonar_vads(true);
+            if n > 0 {
+                std::thread::sleep(Duration::from_millis(400)); // let PnP publish the endpoints
+                self.refresh();
+                self.dirty();
+                *self.rec_msg.lock().unwrap() = format!("GG QUIT: SONAR VADS BACK ON {n}/{total}");
+            }
+        }
     }
 
     /// Cheap periodic refresh: only what the visible tab needs.
@@ -1958,6 +1980,7 @@ impl ApplicationHandler<UserEv> for App {
         // its notification must also work for a copy that lives in the tray.
         self.maybe_check_update();
         self.notify_update_ready();
+        self.watch_sonar_exit();
         if let Some(t) = self.dirty_since {
             if t.elapsed() > Duration::from_secs(2) {
                 self.cfg.save();
