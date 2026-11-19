@@ -2,11 +2,14 @@
 //! Left click = open, right click = menu. A second launch of BitGG posts
 //! WM_SHOW_EXISTING to this window instead of starting another copy.
 
+use crate::headset::Battery;
+use crate::tgui::{pal, tiny_glyph};
 use crate::UserEv;
-use std::sync::atomic::{AtomicIsize, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU32, Ordering};
 use std::sync::{Mutex, OnceLock};
 use windows::core::{w, PCWSTR};
-use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
+use windows::Win32::Foundation::{BOOL, HWND, LPARAM, LRESULT, POINT, WPARAM};
+use windows::Win32::Graphics::Gdi::{CreateBitmap, DeleteObject};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Shell::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
@@ -24,6 +27,11 @@ pub const CMD_EXIT: u32 = 9;
 static PROXY: OnceLock<Mutex<EventLoopProxy<UserEv>>> = OnceLock::new();
 static HWND_RAW: AtomicIsize = AtomicIsize::new(0);
 static TASKBAR_CREATED: AtomicU32 = AtomicU32::new(0);
+/// Headset battery shown as its own tray icon (ID 2) while a headset is found.
+static BATTERY: Mutex<Option<Battery>> = Mutex::new(None);
+static BATTERY_SHOWN: AtomicBool = AtomicBool::new(false);
+static BATTERY_ICON: AtomicIsize = AtomicIsize::new(0);
+const BATTERY_ID: u32 = 2;
 
 fn send(cmd: u32) {
     if let Some(p) = PROXY.get() {
@@ -89,15 +97,145 @@ pub fn notify(title: &str, text: &str) {
     }
 }
 
-/// Remove the icon (otherwise a ghost icon stays until hovered).
+/// Remove the icons (otherwise a ghost icon stays until hovered).
 pub fn remove() {
     let raw = HWND_RAW.load(Ordering::Acquire);
     if raw != 0 {
         unsafe {
             let n = nid(HWND(raw as *mut _));
             let _ = Shell_NotifyIconW(NIM_DELETE, &n);
+            if BATTERY_SHOWN.swap(false, Ordering::AcqRel) {
+                let _ = Shell_NotifyIconW(NIM_DELETE, &NOTIFYICONDATAW { uID: BATTERY_ID, ..n });
+            }
         }
     }
+}
+
+/// Headset battery from the headset thread; None hides the battery icon.
+pub fn set_battery(b: Option<Battery>) {
+    {
+        let mut cur = BATTERY.lock().unwrap();
+        if *cur == b {
+            return;
+        }
+        *cur = b;
+    }
+    let raw = HWND_RAW.load(Ordering::Acquire);
+    if raw != 0 {
+        unsafe { show_battery(HWND(raw as *mut _)) };
+    }
+}
+
+/// Add, update or remove the battery icon to match BATTERY.
+unsafe fn show_battery(hwnd: HWND) {
+    let b = BATTERY.lock().unwrap().clone();
+    let mut n = NOTIFYICONDATAW { cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32, hWnd: hwnd, uID: BATTERY_ID, ..Default::default() };
+    let Some(b) = b else {
+        if BATTERY_SHOWN.swap(false, Ordering::AcqRel) {
+            let _ = Shell_NotifyIconW(NIM_DELETE, &n);
+        }
+        return;
+    };
+    let size = GetSystemMetrics(SM_CXSMICON).clamp(16, 64);
+    let Some(icon) = make_icon(size, &battery_pixels(size as usize, &b)) else { return };
+    let tip = match b.percent {
+        Some(p) if b.charging => format!("{}: {p}% (charging)", b.name),
+        Some(p) => format!("{}: {p}%", b.name),
+        None => format!("{}: off", b.name),
+    };
+    let t: Vec<u16> = tip.encode_utf16().take(127).collect();
+    n.szTip[..t.len()].copy_from_slice(&t);
+    n.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
+    n.uCallbackMessage = WM_TRAY;
+    n.hIcon = icon;
+    let shown = BATTERY_SHOWN.load(Ordering::Acquire);
+    let ok = Shell_NotifyIconW(if shown { NIM_MODIFY } else { NIM_ADD }, &n).as_bool()
+        || (shown && Shell_NotifyIconW(NIM_ADD, &n).as_bool());
+    BATTERY_SHOWN.store(ok, Ordering::Release);
+    // the shell keeps its own copy: free the previous icon
+    let old = BATTERY_ICON.swap(icon.0 as isize, Ordering::AcqRel);
+    if old != 0 {
+        let _ = DestroyIcon(HICON(old as *mut _));
+    }
+}
+
+/// Headset (top) and battery number (below) on a 16x16 grid, scaled to
+/// `size`, as ARGB with a dark outline so it reads on light and dark taskbars.
+pub fn battery_pixels(size: usize, b: &Battery) -> Vec<u32> {
+    const N: usize = 16;
+    let mut grid = [[0u32; N]; N]; // 0 = transparent, else RGB
+    let (band, digit) = match b.percent {
+        None => (pal::DGREY, pal::DGREY),
+        Some(_) if b.charging => (pal::LGREY, pal::BLUE),
+        Some(p) if p <= 20 => (pal::LGREY, pal::RED),
+        Some(_) => (pal::LGREY, pal::WHITE),
+    };
+    // headband + ear cups, rows 0-4:
+    //   .....######.....
+    //   ....#......#....
+    //   ..###......###..
+    //   ..###......###..
+    //   ..###......###..
+    for x in 5..=10 {
+        grid[0][x] = band;
+    }
+    grid[1][4] = band;
+    grid[1][11] = band;
+    for y in 2..=4 {
+        for x in [2, 3, 4, 11, 12, 13] {
+            grid[y][x] = band;
+        }
+    }
+    // number, rows 6-15 (2x scale) or 8-12 (1x, for "100")
+    let text = b.percent.map(|p| p.to_string()).unwrap_or_else(|| "--".into());
+    let scale = if text.len() <= 2 { 2 } else { 1 };
+    let glyphs: Vec<_> = text.chars().filter_map(tiny_glyph).collect();
+    let w: usize = glyphs.iter().map(|(gw, _)| *gw as usize * scale).sum::<usize>() + (glyphs.len().saturating_sub(1)) * scale;
+    let (mut x0, y0) = ((N - w.min(N)) / 2, if scale == 2 { 6 } else { 8 });
+    for (gw, rows) in glyphs {
+        for (ry, bits) in rows.iter().enumerate() {
+            for col in 0..gw as usize {
+                if bits & (0b100 >> col) != 0 {
+                    for dy in 0..scale {
+                        for dx in 0..scale {
+                            let (x, y) = (x0 + col * scale + dx, y0 + ry * scale + dy);
+                            if x < N && y < N {
+                                grid[y][x] = digit;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        x0 += (gw as usize + 1) * scale;
+    }
+    let lit = |x: i32, y: i32| x >= 0 && y >= 0 && (x as usize) < N && (y as usize) < N && grid[y as usize][x as usize] != 0;
+    let mut out = vec![0u32; size * size];
+    for py in 0..size {
+        for px in 0..size {
+            let (gx, gy) = ((px * N / size) as i32, (py * N / size) as i32);
+            out[py * size + px] = if lit(gx, gy) {
+                0xFF00_0000 | grid[gy as usize][gx as usize]
+            } else if (-1..=1).any(|dy| (-1..=1).any(|dx| lit(gx + dx, gy + dy))) {
+                0xD000_0000 // outline
+            } else {
+                0
+            };
+        }
+    }
+    out
+}
+
+/// 32-bit ARGB pixels -> icon (alpha from the pixels; the mask is unused).
+unsafe fn make_icon(size: i32, px: &[u32]) -> Option<HICON> {
+    let color = CreateBitmap(size, size, 1, 32, Some(px.as_ptr() as *const _));
+    let mask_bits = vec![0u8; (size as usize).div_ceil(16) * 2 * size as usize];
+    let mask = CreateBitmap(size, size, 1, 1, Some(mask_bits.as_ptr() as *const _));
+    let info = ICONINFO { fIcon: BOOL(1), xHotspot: 0, yHotspot: 0, hbmMask: mask, hbmColor: color };
+    let icon = CreateIconIndirect(&info).ok();
+    let _ = DeleteObject(color);
+    let _ = DeleteObject(mask);
+    icon
 }
 
 unsafe fn run() {
@@ -110,6 +248,7 @@ unsafe fn run() {
     HWND_RAW.store(hwnd.0 as isize, Ordering::Release);
     TASKBAR_CREATED.store(RegisterWindowMessageW(w!("TaskbarCreated")), Ordering::Release);
     add_icon(hwnd);
+    show_battery(hwnd); // the headset thread may have read it already
     let mut msg = MSG::default();
     while GetMessageW(&mut msg, None, 0, 0).as_bool() {
         let _ = TranslateMessage(&msg);
@@ -151,7 +290,9 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             LRESULT(0)
         }
         m if m != 0 && m == TASKBAR_CREATED.load(Ordering::Acquire) => {
-            add_icon(hwnd); // Explorer restarted: put the icon back
+            add_icon(hwnd); // Explorer restarted: put the icons back
+            BATTERY_SHOWN.store(false, Ordering::Release);
+            show_battery(hwnd);
             LRESULT(0)
         }
         _ => DefWindowProcW(hwnd, msg, wp, lp),
