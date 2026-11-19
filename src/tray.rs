@@ -186,6 +186,19 @@ pub fn battery_pixels(size: usize, b: &Battery) -> Vec<u32> {
             grid[y][x] = band;
         }
     }
+    // charging: lightning bolt inside the headband, rows 1-5:
+    //   ........##......
+    //   .......##.......
+    //   ......####......
+    //   .......##.......
+    //   ......##........
+    if b.charging && b.percent.is_some() {
+        for (y, xs) in [(1, &[8, 9][..]), (2, &[7, 8]), (3, &[6, 7, 8, 9]), (4, &[7, 8]), (5, &[6, 7])] {
+            for &x in xs {
+                grid[y][x] = pal::YELLOW;
+            }
+        }
+    }
     // number, rows 6-15 (2x scale) or 8-12 (1x, for "100")
     let text = b.percent.map(|p| p.to_string()).unwrap_or_else(|| "--".into());
     let scale = if text.len() <= 2 { 2 } else { 1 };
